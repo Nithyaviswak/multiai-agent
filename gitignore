@@ -1,0 +1,54 @@
+# Environment and secrets
+.env
+**/.env
+!.env.example
+!**/.env.example
+
+# Python virtual environments
+venv/
+.venv/
+backend/venv/
+backend/.venv/
+
+# Python cache/build
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+
+# Node dependencies/cache/build
+node_modules/
+frontend/node_modules/
+frontend/.vite/
+frontend/dist/
+
+# Logs/temp
+*.log
+*.tmp
+*.temp
+*.pid
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Common large model/data artifacts
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+*.ckpt
+*.parquet
+*.feather
+*.h5
+*.hdf5
