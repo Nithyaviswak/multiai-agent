@@ -114,3 +114,19 @@ The frontend proxies `/api` to backend port `8000`.
 - Never commit real API keys.
 - Keep `backend/.env` ignored.
 - If keys were exposed, rotate them immediately.
+
+## Deploy on Render
+
+This repo now includes `render.yaml`, which runs the web service from `backend/` so `app.main:app` resolves correctly.
+
+If configuring manually in the Render dashboard, use:
+
+- Root Directory: `backend`
+- Build Command: `pip install -r requirements.txt`
+- Start Command: `python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+Required env vars on Render:
+
+- `GROQ_API_KEY`
+- `TAVILY_API_KEY`
+- Optional: `LLM_MODEL` (default `llama-3.1-8b-instant`)
