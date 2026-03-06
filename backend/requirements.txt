@@ -9,7 +9,6 @@ langgraph==0.0.30
 langchain-groq==0.1.2
 langchain-chroma==0.1.1
 chromadb==0.4.24
-tiktoken==0.6.0
 tavily-python==0.3.1
 python-dotenv==1.0.0
 aiohttp==3.9.1
@@ -22,3 +21,4 @@ structlog==23.2.0
 ratelimit==2.2.1
 pytest==7.4.3
 pytest-asyncio==0.21.1
+tiktoken
