@@ -1,9 +1,9 @@
 [build]
-  command = "npm run build"
+  command = "npm ci --include=dev && npm run build"
   publish = "dist"
 
 [build.environment]
-  NODE_ENV = "production"
+  NPM_CONFIG_PRODUCTION = "false"
 
 # Redirects for SPA
 [[redirects]]
