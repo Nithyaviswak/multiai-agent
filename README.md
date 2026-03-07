@@ -130,3 +130,26 @@ Required env vars on Render:
 - `GROQ_API_KEY`
 - `TAVILY_API_KEY`
 - Optional: `LLM_MODEL` (default `llama-3.1-8b-instant`)
+
+## Deploy Frontend on Netlify
+
+`frontend/netlify.toml` is configured to proxy frontend API calls to:
+
+- `https://multiai-agent.onrender.com`
+
+### Netlify setup (Git-based deploy)
+
+1. Push this repo to GitHub/GitLab/Bitbucket.
+2. In Netlify, choose **Add new site** -> **Import an existing project**.
+3. Select the repo and use these build settings:
+   - Base directory: `frontend`
+   - Build command: `npm run build`
+   - Publish directory: `dist`
+4. Deploy the site.
+
+### Why this works
+
+- Frontend code calls `/api/...`.
+- Netlify redirect rule in `frontend/netlify.toml` rewrites `/api/*` to:
+  - `https://multiai-agent.onrender.com/api/:splat`
+- SPA refresh routes are handled by redirecting `/*` to `/index.html`.

@@ -8,7 +8,7 @@
 # Redirects for SPA
 [[redirects]]
   from = "/api/*"
-  to = "https://ai-research-backend.onrender.com/api/:splat"
+  to = "https://multiai-agent.onrender.com/api/:splat"
   status = 200
   force = true
 
@@ -33,4 +33,4 @@
     Cache-Control = "public, max-age=31536000, immutable"
 
 [context.production.environment]
-  VITE_API_URL = "https://ai-research-backend.onrender.com"
+  VITE_API_URL = "https://multiai-agent.onrender.com"
