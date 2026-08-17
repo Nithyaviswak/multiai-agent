@@ -75,6 +75,11 @@ class NetworkWorkflow:
         }
         self.graph = self._build_graph()
 
+    def set_model(self, model: str) -> None:
+        """Apply a model to every agent in the workflow (used by /api/models)."""
+        for agent in self.agents.values():
+            agent.set_model(model)
+
     def _build_graph(self) -> StateGraph:
         workflow = StateGraph(AgentState)
 

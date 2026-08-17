@@ -16,6 +16,8 @@ from app.tools.evaluation import evaluation
 from app.tools.rbac import rbac
 from app.tools.guardrails import guardrails
 from app.tools.calling.registry import tool_registry
+from app.tools.model_registry import list_models, get_model, PROVIDERS
+from app.tools.keyring import keyring
 
 app = FastAPI(
     title="Multi-Agent AI Network Automation Platform",
@@ -56,6 +58,13 @@ class ToolCallRequest(BaseModel):
     tool: str
     params: Dict[str, Any]
 
+class ModelRequest(BaseModel):
+    model: str
+
+class ProviderKeyRequest(BaseModel):
+    provider: str
+    key: str
+
 # ── Global workflow state ─────────────────────────────────────────
 workflow_state = {}
 
@@ -65,6 +74,13 @@ def _prune_workflow_state():
         evict = len(workflow_state) - settings.MAX_WORKFLOW_STATE_ENTRIES
         for k in list(workflow_state)[:evict]:
             workflow_state.pop(k, None)
+
+# Active LLM model (defaults to the configured model; can be changed at runtime).
+active_model = settings.LLM_MODEL
+
+def _apply_active_model() -> None:
+    """Push the active model to every agent in the running workflow."""
+    network_workflow.set_model(active_model)
 
 # ── WebSocket Connections ────────────────────────────────────────
 active_connections: Dict[str, WebSocket] = {}
@@ -201,6 +217,67 @@ async def list_runs(limit: int = 50):
     runs = evaluation.get_summary().get("total_runs", 0)
     return {"success": True, "total_runs": runs}
 
+# ── Model & Provider Endpoints ───────────────────────────────────
+@app.get("/api/models")
+async def list_models_api(provider: Optional[str] = None):
+    models = list_models(provider)
+    status = keyring.status()
+    out = []
+    for m in models:
+        meta = status.get(m["provider"], {})
+        out.append({
+            "id": m["id"],
+            "name": m["name"],
+            "provider": m["provider"],
+            "provider_name": meta.get("name", m["provider"]),
+            "key_configured": meta.get("configured", False),
+            "fast": m["fast"],
+            "input_per_1m": m["input_per_1m"],
+            "output_per_1m": m["output_per_1m"],
+            "active": m["id"] == active_model,
+        })
+    return {"success": True, "models": out, "current": active_model}
+
+@app.get("/api/models/current")
+async def get_active_model():
+    meta = get_model(active_model)
+    return {"success": True, "model": active_model,
+            "name": (meta or {}).get("name", active_model)}
+
+@app.post("/api/models")
+async def set_active_model(req: ModelRequest):
+    global active_model
+    meta = get_model(req.model)
+    if not meta:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
+    provider = meta.get("provider", "")
+    status = keyring.status()
+    if not status.get(provider, {}).get("configured", False):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Provider '{provider}' has no API key configured. Add one in Settings first.",
+        )
+    active_model = req.model
+    _apply_active_model()
+    audit_logger.log("model_changed", "engineer", "workflow", {"model": req.model})
+    return {"success": True, "model": active_model}
+
+@app.get("/api/providers")
+async def list_providers():
+    return {"success": True, "providers": keyring.status()}
+
+@app.post("/api/providers/keys")
+async def set_provider_key(req: ProviderKeyRequest):
+    try:
+        keyring.set_key(req.provider, req.key)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    # Rebuild clients with the new key for the active model's provider.
+    _apply_active_model()
+    audit_logger.log("provider_key_updated", "engineer", "workflow",
+                     {"provider": req.provider}, "success")
+    return {"success": True, **keyring.status().get(req.provider, {})}
+
 # ── Audit Endpoints ──────────────────────────────────────────────
 @app.get("/api/audit/logs")
 async def get_audit_logs(limit: int = 100, action: Optional[str] = None):
@@ -260,7 +337,8 @@ async def run_workflow(workflow_id: str, intent: str, environment: str,
                        session_id: str = "default", user_id: str = "engineer"):
     try:
         logger.info("Starting workflow", workflow_id=workflow_id, intent=intent)
-        result = await network_workflow.run(intent, environment, session_id, user_id)
+        result = await network_workflow.run(intent, environment, session_id, user_id,
+                                            run_id=workflow_id)
 
         if isinstance(result, dict):
             result.setdefault("workflow_id", workflow_id)
@@ -292,6 +370,8 @@ async def startup():
         raise RuntimeError("; ".join(problems))
     for env_name, env_data in device_simulator.get_environments().items():
         logger.info("Environment available", name=env_data["name"], type=env_data["type"])
+    _apply_active_model()
+    logger.info("Active model", model=active_model)
 
 @app.on_event("shutdown")
 async def shutdown():

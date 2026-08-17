@@ -15,6 +15,6 @@ def test_validate_settings_flags_missing_key_only_when_absent():
 
 
 def test_pricing_table_has_model():
-    from app.agents.base import MODEL_COST_PER_1M
-    assert settings.LLM_MODEL in MODEL_COST_PER_1M, \
-        f"LLM_MODEL {settings.LLM_MODEL} missing from MODEL_COST_PER_1M pricing table"
+    from app.tools.model_registry import MODEL_BY_ID
+    assert settings.LLM_MODEL in MODEL_BY_ID, \
+        f"LLM_MODEL {settings.LLM_MODEL} missing from model registry"

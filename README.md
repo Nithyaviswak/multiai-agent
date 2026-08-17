@@ -1,8 +1,10 @@
-﻿# Multi-Agent AI Network Automation System
+﻿# Multi AI Agent
 
-Multi-agent AI system for network troubleshooting, configuration generation, and
-compliance validation, built on FastAPI + LangGraph + Groq with a React frontend.
-Runs against simulated Cisco environments (no hardware required).
+A provider-agnostic multi-agent orchestration platform built on
+FastAPI + LangGraph + LangChain with a React (Claude-style) frontend. Ship with
+your own OpenAI, Anthropic, or Groq API keys and switch models on the fly.
+Includes a network-operations agentic workflow that runs against simulated
+Cisco environments (no hardware required).
 
 > **Metrics honesty note:** Read [`backend/docs/METRICS.md`](backend/docs/METRICS.md).
 > The previously advertised figures (95% task completion, 60% context reduction)
@@ -11,6 +13,10 @@ Runs against simulated Cisco environments (no hardware required).
 
 ## Features
 
+- **Bring your own key** — add Groq / OpenAI / Anthropic keys from the UI
+  (settings sheet); each is stored in memory and never shown again.
+- **Model switching** — pick any model from the composer at the bottom of the
+  UI; hot-swaps the LLM for every agent in the workflow.
 - **12 specialized agents** in a LangGraph pipeline:
   Planner, Topology Discovery, Knowledge, NETCONF Collection, Configuration,
   Automation, Verification, Monitoring, Compliance Checker, Log Analyzer,
@@ -81,7 +87,8 @@ cd backend
 Copy-Item .env.example .env
 ```
 
-Set `GROQ_API_KEY` (and optionally `TAVILY_API_KEY`) in `backend/.env`.
+Set `GROQ_API_KEY` in `backend/.env` as a default. OpenAI and Anthropic keys can
+be added later from the UI (or via `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`).
 The default `LLM_MODEL` is a model verified to exist on Groq
 (`openai/gpt-oss-20b`); the app fails fast at startup if the configured model
 is not on the known-good list.
@@ -129,6 +136,11 @@ cd backend
 | `POST` | `/api/memory/context` | Recent project context |
 | `POST` | `/api/memory/undo` | Undo last config change |
 | `GET` | `/api/evaluation/stats` | Per-agent + aggregate metrics |
+| `GET` | `/api/models` | List supported models (incl. which providers have keys) |
+| `GET` | `/api/models/current` | Currently active model |
+| `POST` | `/api/models` | Switch the active model (`{"model": "openai/gpt-4o"}`) |
+| `GET` | `/api/providers` | Provider/key status |
+| `POST` | `/api/providers/keys` | Save an API key (`{"provider": "openai", "key": "..."}`) |
 | `GET` | `/api/runs/{run_id}` | Per-run trace + metrics |
 | `GET` | `/api/audit/logs` | Audit log entries |
 | `GET` | `/api/tools/call` | Invoke a registered tool |
@@ -179,6 +191,8 @@ Incident Response → [Approval Gate for mutations] → Report
 See [`backend/docs/SECURITY.md`](backend/docs/SECURITY.md). Key points:
 
 - Never commit real API keys; `backend/.env` is git-ignored.
+- Keys added from the UI live in in-memory keyring only; providers without a
+  key are blocked (or simply not offered) in the model picker.
 - Mutating intents require human approval.
 - Guardrails block destructive/credential-exfil inputs deterministically.
 
@@ -192,7 +206,7 @@ collected and the honest, measured results.
 `render.yaml` deploys the backend from the `backend` directory. Required env
 vars on Render:
 
-- `GROQ_API_KEY`
+- `GROQ_API_KEY` (default provider; others can be added via UI)
 - `TAVILY_API_KEY` (optional)
 - `LLM_MODEL` (optional, default `openai/gpt-oss-20b`)
 

@@ -19,6 +19,8 @@ class Settings(BaseSettings):
 
     GROQ_API_KEY: str = ""
     TAVILY_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
+    ANTHROPIC_API_KEY: str = ""
 
     # Default must be a model that currently exists on Groq (verified 2026-08-17).
     LLM_MODEL: str = "openai/gpt-oss-20b"

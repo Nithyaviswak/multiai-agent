@@ -1,41 +1,21 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
-from langchain_groq import ChatGroq
 from app.config import settings
 from app.logging_config import logger
 
-# Estimated cost per 1M tokens (USD) for Groq-hosted models. These are list
-# prices used for internal budgeting; real cost depends on the provider bill.
-MODEL_COST_PER_1M = {
-    "openai/gpt-oss-120b": {"input": 0.24, "output": 0.96},
-    "openai/gpt-oss-20b": {"input": 0.06, "output": 0.24},
-    "qwen/qwen3.6-27b": {"input": 0.10, "output": 0.40},
-    "allam-2-7b": {"input": 0.05, "output": 0.20},
-}
-
-
-def estimate_cost(model: str, input_tokens: int, output_tokens: int) -> float:
-    """Estimate USD cost for a single call using the built-in pricing table."""
-    rates = MODEL_COST_PER_1M.get(model, {"input": 0.10, "output": 0.40})
-    return (input_tokens / 1_000_000 * rates["input"]) + (output_tokens / 1_000_000 * rates["output"])
-
 
 class BaseAgent(ABC):
-    """Base class for all AI agents"""
+    """Base class for all AI agents.
 
-    def __init__(self):
-        # Only construct the LLM client when a key is configured, so agent logic
-        # can be unit-tested without credentials. Startup validation fails fast
-        # when a key is genuinely missing at runtime.
-        if settings.GROQ_API_KEY:
-            self.llm = ChatGroq(
-                groq_api_key=settings.GROQ_API_KEY,
-                model_name=settings.LLM_MODEL,
-                temperature=0.7
-            )
-        else:
-            self.llm = None
-        self.model = settings.LLM_MODEL
+    The LLM client is provider-agnostic: ``_ensure_llm`` builds a client for
+    ``self.model`` using the keyring's key for that model's provider. Agent
+    logic can be unit-tested without credentials because the client is only
+    built lazily on the first call.
+    """
+
+    def __init__(self, model: str = None):
+        self.model = model or settings.LLM_MODEL
+        self.llm = None
         self.max_retries = settings.MAX_RETRIES
         self.last_usage: Dict[str, Any] = {
             "input_tokens": 0, "output_tokens": 0, "total_tokens": 0,
@@ -46,6 +26,31 @@ class BaseAgent(ABC):
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         pass
 
+    def set_model(self, model: str) -> None:
+        """Hot-swap the model (and provider) for this agent."""
+        if model == self.model and self.llm is not None:
+            return
+        self.model = model
+        self.llm = None  # rebuilt lazily with the new provider's key
+
+    def _ensure_llm(self) -> Any:
+        from app.tools.model_registry import build_chat_model, MODEL_BY_ID
+        from app.tools.keyring import keyring
+        if self.llm is not None:
+            return self.llm
+        model_meta = MODEL_BY_ID.get(self.model)
+        if not model_meta:
+            raise RuntimeError(f"Unknown model: {self.model}")
+        provider = model_meta["provider"]
+        api_key = keyring.get_key(provider)
+        if not api_key:
+            raise RuntimeError(
+                f"No API key configured for provider '{provider}'. "
+                f"Add it in Settings or set the {keyring.status()[provider]['env_key']} env var."
+            )
+        self.llm = build_chat_model(self.model, api_key)
+        return self.llm
+
     async def _call_llm(self, prompt: str, system_message: str = "") -> Dict[str, Any]:
         """Call the LLM and return ``{"content", "input_tokens", "output_tokens",
         "total_tokens", "estimated_cost"}``.
@@ -54,18 +59,15 @@ class BaseAgent(ABC):
         result dict so the caller (and the workflow retry loop) can react.
         """
         from langchain_core.messages import HumanMessage, SystemMessage
+        from app.tools.model_registry import estimate_cost
 
         try:
-            if not self.llm:
-                raise RuntimeError(
-                    "GROQ_API_KEY is not configured; cannot call LLM. "
-                    "Set it in backend/.env and restart."
-                )
+            llm = self._ensure_llm()
             messages = []
             if system_message:
                 messages.append(SystemMessage(content=system_message))
             messages.append(HumanMessage(content=prompt))
-            response = await self.llm.ainvoke(messages)
+            response = await llm.ainvoke(messages)
 
             usage_metadata = getattr(response, "usage_metadata", None)
             if not usage_metadata:

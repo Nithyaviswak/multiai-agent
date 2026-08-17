@@ -68,6 +68,31 @@ class NetworkAPI {
     return r.data;
   }
 
+  async getModels() {
+    const r = await this.client.get('/models');
+    return r.data;
+  }
+
+  async getCurrentModel() {
+    const r = await this.client.get('/models/current');
+    return r.data;
+  }
+
+  async setModel(model) {
+    const r = await this.client.post('/models', { model });
+    return r.data;
+  }
+
+  async getProviders() {
+    const r = await this.client.get('/providers');
+    return r.data;
+  }
+
+  async setProviderKey(provider, key) {
+    const r = await this.client.post('/providers/keys', { provider, key });
+    return r.data;
+  }
+
   async getAuditLogs(limit = 100, action = null) {
     const r = await this.client.get('/audit/logs', { params: { limit, ...(action ? { action } : {}) } });
     return r.data;

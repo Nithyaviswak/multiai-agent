@@ -1,120 +1,198 @@
-import { Terminal, Send, Server, Globe, Cpu, Activity, Zap, Network } from 'lucide-react';
-import { useState } from 'react';
-import { motion } from 'framer-motion';
+import { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { ArrowUp, Sparkles, CheckCircle2, ChevronDown, Plus } from 'lucide-react';
+import { networkAPI } from '../services/api';
 
-const EXAMPLE_INTENTS = [
-  "Configure VLAN 20 on distribution-sw-01",
-  "Troubleshoot OSPF neighbor down on core-router-01",
-  "Audit security compliance across all devices",
-  "Generate a report on network health and compliance",
-  "Monitor edge-router-01 CPU and memory",
-  "Undo yesterday's VLAN changes on access-sw-01",
+const SUGGESTIONS = [
+  'Configure OSPF on core-router-01',
+  'Check connectivity between the two routers',
+  'Audit security compliance across devices',
+  'Why is the edge link flapping tonight?',
+  'Summarize the network health report',
 ];
 
-const NetworkInput = ({ onStart, isLoading }) => {
+const ProviderBadge = ({ provider }) => {
+  const labels = { groq: 'Groq', openai: 'OpenAI', anthropic: 'Claude' };
+  return (
+    <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-paper-inset text-ink-mute">
+      {labels[provider] || provider}
+    </span>
+  );
+};
+
+const Composer = ({ onStart, isLoading }) => {
   const [intent, setIntent] = useState('');
-  const [environment, setEnvironment] = useState('devnet-sandbox');
+  const [models, setModels] = useState([]);
+  const [activeModel, setActiveModel] = useState(null);
+  const [modelOpen, setModelOpen] = useState(false);
+  const pickerRef = useRef(null);
+
+  useEffect(() => {
+    networkAPI.getModels().then(r => {
+      if (r.success) {
+        setModels(r.models || []);
+        setActiveModel(r.current);
+      }
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    const close = (e) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target)) setModelOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, []);
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (intent.trim() && !isLoading) {
-      onStart(intent.trim(), environment, `session-${Date.now()}`, 'engineer');
+    if (intent.trim() && !isLoading) onStart(intent.trim());
+  };
+
+  const pickModel = async (id) => {
+    setActiveModel(id);
+    setModelOpen(false);
+    try {
+      const r = await networkAPI.setModel(id);
+      if (r.success) setActiveModel(r.model);
+    } catch (err) {
+      console.error('model switch failed', err);
     }
   };
 
-  return (
-    <div className="card p-6 sm:p-8">
-      <div className="text-center mb-6">
-        <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[rgba(99,102,241,0.1)] border border-[rgba(99,102,241,0.15)] text-xs text-[#818cf8] font-medium mb-3">
-          <Zap className="w-3.5 h-3.5" />
-          Network Automation Assistant
-        </div>
-        <p className="text-sm text-[#94a3b8]">
-          12 specialized agents &middot; 7 tools &middot; Memory &middot; Human approval &middot; RBAC
-        </p>
-      </div>
+  const activeMeta = models.find(m => m.id === activeModel);
+  const groupByProvider = () => {
+    const out = {};
+    for (const m of models) {
+      (out[m.provider] = out[m.provider] || []).push(m);
+    }
+    return out;
+  };
+  const grouped = groupByProvider();
 
-      <form onSubmit={handleSubmit}>
-        <div className="flex flex-wrap gap-2 mb-4">
-          {EXAMPLE_INTENTS.map((ex, i) => (
-            <button
+  return (
+    <div className="w-full">
+      {/* Suggestion chips above composer */}
+      {!isLoading && !intent && (
+        <div className="flex flex-wrap gap-2 justify-center mb-3 px-1">
+          {SUGGESTIONS.map((s, i) => (
+            <motion.button
               key={i}
-              type="button"
-              onClick={() => setIntent(ex)}
-              className="px-3 py-1.5 rounded-full text-xs font-medium
-                       bg-[rgba(99,102,241,0.06)] border border-[rgba(99,102,241,0.1)]
-                       text-[#94a3b8] hover:text-[#e2e8f0] hover:border-[rgba(99,102,241,0.25)]
-                       hover:bg-[rgba(99,102,241,0.1)] transition-all duration-200"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: i * 0.04 }}
+              onClick={() => setIntent(s)}
+              className="px-3.5 py-2 rounded-full bg-paper-elevated border border-paper-line text-[13px] text-ink-soft hover:border-clay/40 hover:text-ink transition-colors"
             >
-              {ex.length > 35 ? ex.slice(0, 35) + '...' : ex}
-            </button>
+              {s}
+            </motion.button>
           ))}
         </div>
+      )}
 
-        <div className="relative flex items-center gap-3">
-          <div className="relative flex-1">
-            <Terminal className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[#64748b]" />
-            <input
-              type="text"
-              value={intent}
-              onChange={(e) => setIntent(e.target.value)}
-              placeholder='e.g., "Configure VLAN 20 on distribution-sw-01"'
-              className="input pl-12 pr-4 py-3.5 text-sm"
-              disabled={isLoading}
-            />
-          </div>
-
-          <select
-            value={environment}
-            onChange={(e) => setEnvironment(e.target.value)}
-            className="input w-auto min-w-[140px] py-3.5 text-sm"
+      {/* Composer bar */}
+      <form onSubmit={handleSubmit} className="glass rounded-[2rem] shadow-composer px-3 py-2.5 flex items-end gap-2">
+        <div className="flex-1">
+          <textarea
+            value={intent}
+            onChange={(e) => setIntent(e.target.value)}
+            placeholder="Ask an agent anything…"
+            rows={1}
+            maxLength={2000}
             disabled={isLoading}
-          >
-            <option value="devnet-sandbox">DevNet Sandbox</option>
-            <option value="containerlab">ContainerLab</option>
-            <option value="gns3">GNS3</option>
-            <option value="eve-ng">EVE-NG</option>
-          </select>
-
-          <motion.button
-            whileHover={!isLoading && intent.trim() ? { scale: 1.02 } : {}}
-            whileTap={!isLoading && intent.trim() ? { scale: 0.98 } : {}}
-            type="submit"
-            disabled={!intent.trim() || isLoading}
-            className="btn btn-primary py-3.5 px-6 whitespace-nowrap"
-          >
-            {isLoading ? (
-              <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <Send className="w-4 h-4" />
-            )}
-            <span>{isLoading ? 'Executing...' : 'Execute'}</span>
-          </motion.button>
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit(e); }
+            }}
+            className="w-full resize-none bg-transparent border-none outline-none text-[15px] leading-relaxed text-ink placeholder:text-ink-faint py-1.5 px-2"
+          />
         </div>
+
+        <div className="relative" ref={pickerRef}>
+          <button
+            type="button"
+            onClick={() => setModelOpen(!modelOpen)}
+            disabled={isLoading}
+            className="flex items-center gap-1.5 pl-2.5 pr-2 py-1.5 rounded-full bg-paper-inset text-ink-soft hover:text-ink transition-colors text-[13px] font-medium"
+            title="Change model"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-clay" />
+            <span className="max-w-[120px] truncate">{activeMeta?.name || activeModel || 'Model'}</span>
+            <ChevronDown className={`w-3.5 h-3.5 transition-transform ${modelOpen ? 'rotate-180' : ''}`} />
+          </button>
+
+          <AnimatePresence>
+            {modelOpen && (
+              <motion.div
+                initial={{ opacity: 0, y: 8, scale: 0.98 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.98 }}
+                transition={{ duration: 0.16 }}
+                className="absolute bottom-full right-0 mb-2 w-80 max-h-[70vh] overflow-y-auto rounded-2xl bg-paper-elevated border border-paper-line shadow-elevated p-2 z-30"
+              >
+                <p className="px-3 pt-2 pb-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-faint">
+                  Choose a model
+                </p>
+                {Object.entries(grouped).map(([provider, list]) => (
+                  <div key={provider} className="mb-1">
+                    <p className="px-3 pt-2 pb-1 text-[11px] font-medium text-ink-mute uppercase tracking-wide">
+                      {provider}
+                    </p>
+                    {list.map(m => {
+                      const configured = m.key_configured;
+                      const isActive = m.id === activeModel;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => configured && pickModel(m.id)}
+                          className={`w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl text-left transition-colors ${
+                            isActive ? 'bg-clay-soft' : 'hover:bg-paper-inset'
+                          } ${configured ? '' : 'opacity-50 cursor-not-allowed'}`}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-medium text-ink truncate">{m.name}</p>
+                            <div className="flex items-center gap-1.5 mt-0.5">
+                              <ProviderBadge provider={m.provider} />
+                              {!configured && (
+                                <span className="text-[10px] text-ink-faint">needs API key</span>
+                              )}
+                            </div>
+                          </div>
+                          {isActive && <CheckCircle2 className="w-4 h-4 text-clay flex-shrink-0" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+                <p className="px-3 py-2 text-[11px] text-ink-faint border-t border-paper-line mt-1">
+                  Add API keys for unlocked providers in Settings.
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        <motion.button
+          whileTap={{ scale: 0.94 }}
+          type="submit"
+          disabled={!intent.trim() || isLoading}
+          className="w-10 h-10 rounded-full flex items-center justify-center bg-clay text-white
+                     disabled:opacity-35 disabled:cursor-not-allowed transition-colors hover:bg-clay-deep flex-shrink-0"
+          aria-label="Send"
+        >
+          {isLoading ? (
+            <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+          ) : (
+            <ArrowUp className="w-5 h-5" />
+          )}
+        </motion.button>
       </form>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
-        {[
-          { icon: Terminal, label: 'Planner Agent', desc: 'Task decomposition' },
-          { icon: Globe, label: 'Knowledge Agent', desc: 'Hybrid RAG search' },
-          { icon: Cpu, label: 'Monitoring Agent', desc: 'Real-time metrics' },
-          { icon: Activity, label: 'Report Generator', desc: 'Executive reports' },
-        ].map(({ icon: Icon, label, desc }) => (
-          <div
-            key={label}
-            className="rounded-xl p-3 text-center bg-[rgba(15,23,42,0.5)] border border-[rgba(255,255,255,0.04)]
-                       hover:border-[rgba(99,102,241,0.12)] transition-all duration-200"
-          >
-            <div className="w-8 h-8 rounded-lg bg-[rgba(99,102,241,0.1)] flex items-center justify-center mx-auto mb-2">
-              <Icon className="w-4 h-4 text-[#818cf8]" />
-            </div>
-            <h4 className="text-xs font-semibold text-[#e2e8f0]">{label}</h4>
-            <p className="text-[10px] text-[#64748b] mt-0.5">{desc}</p>
-          </div>
-        ))}
-      </div>
+      <p className="text-center text-[11px] text-ink-faint mt-2">
+        Multi AI Agent runs your own providers. No training on your data.
+      </p>
     </div>
   );
 };
 
-export default NetworkInput;
+export default Composer;
