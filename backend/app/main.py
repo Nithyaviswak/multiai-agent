@@ -16,7 +16,10 @@ from app.tools.evaluation import evaluation
 from app.tools.rbac import rbac
 from app.tools.guardrails import guardrails
 from app.tools.calling.registry import tool_registry
-from app.tools.model_registry import list_models, get_model, PROVIDERS
+from app.tools.model_registry import (
+    list_models, get_model, PROVIDERS, register_custom_model, unregister_custom_model,
+    list_base_urls,
+)
 from app.tools.keyring import keyring
 
 app = FastAPI(
@@ -64,6 +67,16 @@ class ModelRequest(BaseModel):
 class ProviderKeyRequest(BaseModel):
     provider: str
     key: str
+
+class CustomModelRequest(BaseModel):
+    name: str
+    model_id: str
+    api_key: str = ""
+    base_url: str = ""
+
+class ModelKeyRequest(BaseModel):
+    model_id: str
+    api_key: str
 
 # ── Global workflow state ─────────────────────────────────────────
 workflow_state = {}
@@ -225,13 +238,20 @@ async def list_models_api(provider: Optional[str] = None):
     out = []
     for m in models:
         meta = status.get(m["provider"], {})
+        if m.get("custom"):
+            key_configured = bool(m.get("api_key") or keyring.model_key_configured(m["id"]))
+        else:
+            key_configured = meta.get("configured", False)
         out.append({
             "id": m["id"],
             "name": m["name"],
             "provider": m["provider"],
-            "provider_name": meta.get("name", m["provider"]),
-            "key_configured": meta.get("configured", False),
+            "provider_name": meta.get("name", "Custom") if not m.get("custom") else m.get("base_url", "Custom"),
+            "key_configured": key_configured,
             "fast": m["fast"],
+            "free": m.get("free", False),
+            "custom": bool(m.get("custom")),
+            "base_url": m.get("base_url", "") if m.get("custom") else "",
             "input_per_1m": m["input_per_1m"],
             "output_per_1m": m["output_per_1m"],
             "active": m["id"] == active_model,
@@ -251,20 +271,56 @@ async def set_active_model(req: ModelRequest):
     if not meta:
         raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
     provider = meta.get("provider", "")
-    status = keyring.status()
-    if not status.get(provider, {}).get("configured", False):
-        raise HTTPException(
-            status_code=409,
-            detail=f"Provider '{provider}' has no API key configured. Add one in Settings first.",
-        )
+    if meta.get("custom"):
+        has_key = bool(meta.get("api_key") or keyring.model_key_configured(req.model))
+        if not has_key:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Model '{req.model}' has no API key. Add one in Settings first.",
+            )
+    else:
+        status = keyring.status()
+        if not status.get(provider, {}).get("configured", False):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Provider '{provider}' has no API key configured. Add one in Settings first.",
+            )
     active_model = req.model
     _apply_active_model()
     audit_logger.log("model_changed", "engineer", "workflow", {"model": req.model})
     return {"success": True, "model": active_model}
 
+@app.post("/api/models/custom")
+async def add_custom_model(req: CustomModelRequest):
+    try:
+        meta = register_custom_model(req.model_id, req.name, req.api_key, req.base_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    if req.api_key:
+        keyring.set_model_key(meta["id"], req.api_key)
+    _apply_active_model()
+    audit_logger.log("custom_model_added", "engineer", "workflow",
+                     {"model_id": meta["id"], "name": meta["name"]})
+    return {"success": True, "model": {k: v for k, v in meta.items() if k != "api_key"},
+            "masked_key": (req.api_key[:4] + "…" + req.api_key[-4:]) if len(req.api_key) > 8 else "…"}
+
+@app.delete("/api/models/custom")
+async def remove_custom_model(model_id: str = Query(...)):
+    removed = unregister_custom_model(model_id)
+    keyring.clear_model_key(model_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail=f"Custom model not found: {model_id}")
+    _apply_active_model()
+    audit_logger.log("custom_model_removed", "engineer", "workflow", {"model_id": model_id})
+    return {"success": True, "removed": model_id}
+
 @app.get("/api/providers")
 async def list_providers():
     return {"success": True, "providers": keyring.status()}
+
+@app.get("/api/models/base-urls")
+async def get_base_urls():
+    return {"success": True, "base_urls": list_base_urls()}
 
 @app.post("/api/providers/keys")
 async def set_provider_key(req: ProviderKeyRequest):
@@ -277,6 +333,20 @@ async def set_provider_key(req: ProviderKeyRequest):
     audit_logger.log("provider_key_updated", "engineer", "workflow",
                      {"provider": req.provider}, "success")
     return {"success": True, **keyring.status().get(req.provider, {})}
+
+@app.post("/api/models/keys")
+async def set_model_key(req: ModelKeyRequest):
+    meta = get_model(req.model_id)
+    if not meta:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {req.model_id}")
+    if meta.get("custom"):
+        keyring.set_model_key(req.model_id, req.api_key)
+        meta["api_key"] = req.api_key.strip()
+    else:
+        keyring.set_key(meta["provider"], req.api_key)
+    _apply_active_model()
+    audit_logger.log("model_key_updated", "engineer", "workflow", {"model_id": req.model_id})
+    return {"success": True, "model_id": req.model_id, "configured": True}
 
 # ── Audit Endpoints ──────────────────────────────────────────────
 @app.get("/api/audit/logs")

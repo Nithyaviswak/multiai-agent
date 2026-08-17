@@ -12,13 +12,19 @@ const SUGGESTIONS = [
 ];
 
 const ProviderBadge = ({ provider }) => {
-  const labels = { groq: 'Groq', openai: 'OpenAI', anthropic: 'Claude' };
+  const labels = { groq: 'Groq', openai: 'OpenAI', anthropic: 'Claude', custom: 'Custom' };
   return (
     <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-paper-inset text-ink-mute">
       {labels[provider] || provider}
     </span>
   );
 };
+
+const FreeBadge = () => (
+  <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-[rgba(63,145,66,0.12)] text-[#3F9142]">
+    FREE
+  </span>
+);
 
 const Composer = ({ onStart, isLoading }) => {
   const [intent, setIntent] = useState('');
@@ -135,7 +141,7 @@ const Composer = ({ onStart, isLoading }) => {
                 {Object.entries(grouped).map(([provider, list]) => (
                   <div key={provider} className="mb-1">
                     <p className="px-3 pt-2 pb-1 text-[11px] font-medium text-ink-mute uppercase tracking-wide">
-                      {provider}
+                      {provider === 'custom' ? 'Your custom models' : provider}
                     </p>
                     {list.map(m => {
                       const configured = m.key_configured;
@@ -153,9 +159,15 @@ const Composer = ({ onStart, isLoading }) => {
                             <p className="text-[13px] font-medium text-ink truncate">{m.name}</p>
                             <div className="flex items-center gap-1.5 mt-0.5">
                               <ProviderBadge provider={m.provider} />
+                              {m.custom && (
+                                <span className="text-[10px] text-ink-faint truncate max-w-[110px]">
+                                  {m.base_url || ''}
+                                </span>
+                              )}
                               {!configured && (
                                 <span className="text-[10px] text-ink-faint">needs API key</span>
                               )}
+                              {m.free && <FreeBadge />}
                             </div>
                           </div>
                           {isActive && <CheckCircle2 className="w-4 h-4 text-clay flex-shrink-0" />}
@@ -165,7 +177,7 @@ const Composer = ({ onStart, isLoading }) => {
                   </div>
                 ))}
                 <p className="px-3 py-2 text-[11px] text-ink-faint border-t border-paper-line mt-1">
-                  Add API keys for unlocked providers in Settings.
+                  Add your own model name + API key in Settings, or pick a built-in provider key.
                 </p>
               </motion.div>
             )}

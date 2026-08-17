@@ -13,8 +13,11 @@ Cisco environments (no hardware required).
 
 ## Features
 
-- **Bring your own key** — add Groq / OpenAI / Anthropic keys from the UI
-  (settings sheet); each is stored in memory and never shown again.
+- **Bring your own key** — add Groq / OpenAI / Anthropic keys, or register any
+  **custom model by name + API key** (OpenRouter free models, Together, Mistral,
+  local Ollama, or any OpenAI-compatible endpoint) from the UI settings sheet.
+- **Free open-source models** — Groq-powered GPT-OSS, Qwen, ALLAM and Compound
+  models work out of the box (verified live), flagged FREE in the model picker.
 - **Model switching** — pick any model from the composer at the bottom of the
   UI; hot-swaps the LLM for every agent in the workflow.
 - **12 specialized agents** in a LangGraph pipeline:
@@ -139,6 +142,10 @@ cd backend
 | `GET` | `/api/models` | List supported models (incl. which providers have keys) |
 | `GET` | `/api/models/current` | Currently active model |
 | `POST` | `/api/models` | Switch the active model (`{"model": "openai/gpt-4o"}`) |
+| `POST` | `/api/models/custom` | Register a custom model by name + API key + base URL |
+| `DELETE` | `/api/models/custom` | Remove a custom model (`?model_id=...`) |
+| `POST` | `/api/models/keys` | Set/update the API key for a specific model |
+| `GET` | `/api/models/base-urls` | Preset OpenAI-compatible base URLs |
 | `GET` | `/api/providers` | Provider/key status |
 | `POST` | `/api/providers/keys` | Save an API key (`{"provider": "openai", "key": "..."}`) |
 | `GET` | `/api/runs/{run_id}` | Per-run trace + metrics |

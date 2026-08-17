@@ -34,16 +34,19 @@ class BaseAgent(ABC):
         self.llm = None  # rebuilt lazily with the new provider's key
 
     def _ensure_llm(self) -> Any:
-        from app.tools.model_registry import build_chat_model, MODEL_BY_ID
+        from app.tools.model_registry import build_chat_model, get_model
         from app.tools.keyring import keyring
         if self.llm is not None:
             return self.llm
-        model_meta = MODEL_BY_ID.get(self.model)
+        model_meta = get_model(self.model)
         if not model_meta:
             raise RuntimeError(f"Unknown model: {self.model}")
         provider = model_meta["provider"]
-        api_key = keyring.get_key(provider)
-        if not api_key:
+        if provider == "custom":
+            api_key = model_meta.get("api_key", "")
+        else:
+            api_key = keyring.get_key(provider)
+        if not api_key and provider != "custom":
             raise RuntimeError(
                 f"No API key configured for provider '{provider}'. "
                 f"Add it in Settings or set the {keyring.status()[provider]['env_key']} env var."

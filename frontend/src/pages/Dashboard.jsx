@@ -17,11 +17,18 @@ const Dashboard = () => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [currentModel, setCurrentModel] = useState(null);
 
-  useEffect(() => {
+  const loadCurrentModel = () => {
     networkAPI.getCurrentModel().then(r => {
       if (r.success) setCurrentModel(r.model || null);
     }).catch(() => {});
-  }, []);
+  };
+
+  useEffect(() => { loadCurrentModel(); }, []);
+
+  const closeSettings = () => {
+    setSettingsOpen(false);
+    loadCurrentModel();
+  };
 
   return (
     <div className="min-h-screen bg-paper text-ink flex flex-col">
@@ -205,7 +212,7 @@ const Dashboard = () => {
         </div>
       </div>
 
-      <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsPanel open={settingsOpen} onClose={closeSettings} onChanged={loadCurrentModel} />
     </div>
   );
 };

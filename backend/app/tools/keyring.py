@@ -1,13 +1,21 @@
-"""Keyring: holds API keys per provider in memory.
+"""Keyring: holds API keys in memory.
 
-Keys are seeded from settings (env / .env) at startup and can be added or
-overwritten at runtime via ``/api/providers/keys``. Keys are never returned to
-the client in full - only a status ("configured", "missing") plus a masked hint.
+Two kinds of keys are supported:
+  - provider keys (Groq / OpenAI / Anthropic), seeded from settings at startup
+    and reusable for any model of that provider;
+  - per-model keys for runtime-registered custom (OpenAI-compatible) models,
+    keyed by model id.
+
+Keys are never returned to the client in full — only a status plus a masked
+hint.
 """
 from typing import Dict, Any, Optional
 from app.config import settings
 from app.tools.model_registry import PROVIDERS
 from app.logging_config import logger
+
+# Providers whose keys can be seeded from settings / added via Settings UI.
+SCHEDULED_PROVIDERS = ("groq", "openai", "anthropic")
 
 
 class Keyring:
@@ -26,7 +34,7 @@ class Keyring:
                 self._keys[provider] = key
 
     def set_key(self, provider: str, key: str) -> None:
-        if provider not in PROVIDERS:
+        if provider not in SCHEDULED_PROVIDERS:
             raise ValueError(f"Unknown provider: {provider}")
         key = key.strip()
         if not key:
@@ -42,26 +50,41 @@ class Keyring:
 
     def status(self) -> Dict[str, Any]:
         out = {}
-        for provider, meta in PROVIDERS.items():
+        for provider in SCHEDULED_PROVIDERS:
+            meta = PROVIDERS.get(provider, {})
             key = self._keys.get(provider)
             if key:
                 out[provider] = {
                     "configured": True,
-                    "name": meta["name"],
-                    "env_key": meta["env_key"],
+                    "name": meta.get("name", provider),
+                    "env_key": meta.get("env_key", ""),
                     "masked": key[:4] + "…" + key[-4:] if len(key) > 8 else "…",
                 }
             else:
                 out[provider] = {
                     "configured": False,
-                    "name": meta["name"],
-                    "env_key": meta["env_key"],
+                    "name": meta.get("name", provider),
+                    "env_key": meta.get("env_key", ""),
                     "masked": None,
                 }
         return out
 
     def configured_providers(self) -> list[str]:
-        return [p for p in PROVIDERS if self.has_key(p)]
+        return [p for p in SCHEDULED_PROVIDERS if self.has_key(p)]
+
+    # ── Per-model keys (custom OpenAI-compatible models) ──────────
+    def set_model_key(self, model_id: str, key: str) -> None:
+        key = key.strip()
+        self._keys[f"model:{model_id}"] = key
+
+    def get_model_key(self, model_id: str) -> Optional[str]:
+        return self._keys.get(f"model:{model_id}")
+
+    def model_key_configured(self, model_id: str) -> bool:
+        return bool(self._keys.get(f"model:{model_id}"))
+
+    def clear_model_key(self, model_id: str) -> None:
+        self._keys.pop(f"model:{model_id}", None)
 
 
 keyring = Keyring()

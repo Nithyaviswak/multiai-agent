@@ -93,6 +93,21 @@ class NetworkAPI {
     return r.data;
   }
 
+  async getBaseUrls() {
+    const r = await this.client.get('/models/base-urls');
+    return r.data;
+  }
+
+  async addCustomModel(name, modelId, apiKey, baseUrl) {
+    const r = await this.client.post('/models/custom', { name, model_id: modelId, api_key: apiKey, base_url: baseUrl });
+    return r.data;
+  }
+
+  async removeCustomModel(modelId) {
+    const r = await this.client.delete('/models/custom', { params: { model_id: modelId } });
+    return r.data;
+  }
+
   async getAuditLogs(limit = 100, action = null) {
     const r = await this.client.get('/audit/logs', { params: { limit, ...(action ? { action } : {}) } });
     return r.data;
