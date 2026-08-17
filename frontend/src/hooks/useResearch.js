@@ -1,9 +1,9 @@
 import { useState, useCallback } from 'react';
-import { researchAPI } from '../services/api';
+import { networkAPI } from '../services/api';
 import toast from 'react-hot-toast';
 
-export const useResearch = () => {
-  const [researchState, setResearchState] = useState({
+export const useNetworkAutomation = () => {
+  const [state, setState] = useState({
     isLoading: false,
     data: null,
     error: null,
@@ -11,72 +11,52 @@ export const useResearch = () => {
     currentStep: null,
   });
 
-  const startResearch = useCallback(async (topic) => {
-    setResearchState({
-      isLoading: true,
-      data: null,
-      error: null,
-      workflowId: null,
-      currentStep: 'research',
-    });
+  const startWorkflow = useCallback(async (intent, environment = 'devnet-sandbox', sessionId = 'default', userId = 'engineer') => {
+    setState({ isLoading: true, data: null, error: null, workflowId: null, currentStep: 'plan' });
 
     try {
-      const response = await researchAPI.startResearch(topic);
-      
-      if (response.success) {
-        setResearchState(prev => ({
-          ...prev,
-          workflowId: response.workflow_id,
-        }));
+      const response = await networkAPI.startNetworkWorkflow(intent, environment, sessionId, userId);
 
-        // Start polling for results
-        const result = await researchAPI.pollResearchStatus(response.workflow_id);
-        const dataWithWorkflowId = result.data
-          ? { ...result.data, workflow_id: response.workflow_id }
-          : null;
-        
-        setResearchState({
+      if (response.success) {
+        setState(prev => ({ ...prev, workflowId: response.workflow_id }));
+        const result = await networkAPI.pollWorkflowStatus(response.workflow_id);
+
+        setState({
           isLoading: false,
-          data: dataWithWorkflowId,
+          data: result.data ? { ...result.data, workflow_id: response.workflow_id } : null,
           error: result.error,
           workflowId: response.workflow_id,
           currentStep: result.data?.current_step || (result.error ? 'error' : 'complete'),
         });
 
-        if (result.error) {
-          toast.error('Research failed: ' + result.error);
-        } else {
-          toast.success('Research completed successfully!');
-        }
+        if (result.error) toast.error('Workflow failed: ' + result.error);
+        else toast.success('Network automation completed!');
       } else {
-        throw new Error(response.error || 'Failed to start research');
+        throw new Error(response.error || 'Failed to start workflow');
       }
     } catch (error) {
-      console.error('Research error:', error);
-      setResearchState({
-        isLoading: false,
-        data: null,
-        error: error.message,
-        workflowId: null,
-        currentStep: 'error',
-      });
-      toast.error('Research failed: ' + error.message);
+      setState({ isLoading: false, data: null, error: error.message, workflowId: null, currentStep: 'error' });
+      toast.error('Workflow failed: ' + error.message);
     }
   }, []);
 
-  const resetResearch = useCallback(() => {
-    setResearchState({
-      isLoading: false,
-      data: null,
-      error: null,
-      workflowId: null,
-      currentStep: null,
-    });
+  const approveAction = useCallback(async (workflowId, approved, userId = 'engineer') => {
+    try {
+      const response = await networkAPI.approveAction(workflowId, approved, userId);
+      if (response.success) {
+        toast.success(approved ? 'Action approved' : 'Action denied');
+        // Refetch workflow state
+        const result = await networkAPI.getWorkflowStatus(workflowId);
+        setState(prev => ({ ...prev, data: result.data }));
+      }
+    } catch (error) {
+      toast.error('Approval failed: ' + error.message);
+    }
   }, []);
 
-  return {
-    researchState,
-    startResearch,
-    resetResearch,
-  };
+  const resetWorkflow = useCallback(() => {
+    setState({ isLoading: false, data: null, error: null, workflowId: null, currentStep: null });
+  }, []);
+
+  return { state, startWorkflow, approveAction, resetWorkflow };
 };

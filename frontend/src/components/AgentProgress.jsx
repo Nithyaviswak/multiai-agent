@@ -1,89 +1,140 @@
 import { motion } from 'framer-motion';
-import { CheckCircle, Clock, AlertCircle } from 'lucide-react';
+import {
+  CheckCircle, Clock, AlertCircle, Server, Activity, Shield,
+  FileText, Zap, Globe, Cpu, Users, Terminal, Network
+} from 'lucide-react';
 
-const AgentProgress = ({ currentStep, steps, errors }) => {
-  const agentSteps = [
-    { id: 'research', label: 'Research', description: 'Gathering information from web sources' },
-    { id: 'summary', label: 'Summary', description: 'Creating key insights and bullet points' },
-    { id: 'report', label: 'Report Writing', description: 'Generating professional report' },
-    { id: 'fact_check', label: 'Fact Checking', description: 'Verifying claims and confidence' },
-    { id: 'complete', label: 'Complete', description: 'Research workflow finished' },
-  ];
+const AGENT_STEPS = [
+  { id: 'plan', label: 'Planner', icon: Terminal, color: '#6366f1' },
+  { id: 'topology', label: 'Topology Discovery', icon: Server, color: '#06b6d4' },
+  { id: 'knowledge', label: 'Knowledge Agent', icon: Globe, color: '#10b981' },
+  { id: 'netconf', label: 'NETCONF Collection', icon: Activity, color: '#6366f1' },
+  { id: 'configuration', label: 'Configuration', icon: Zap, color: '#f59e0b' },
+  { id: 'automation', label: 'Automation', icon: Cpu, color: '#8b5cf6' },
+  { id: 'verification', label: 'Verification', icon: CheckCircle, color: '#10b981' },
+  { id: 'monitoring', label: 'Monitoring', icon: Activity, color: '#06b6d4' },
+  { id: 'compliance', label: 'Compliance', icon: Shield, color: '#ef4444' },
+  { id: 'log_analysis', label: 'Log Analysis', icon: FileText, color: '#f59e0b' },
+  { id: 'incident_response', label: 'Incident Response', icon: AlertCircle, color: '#ef4444' },
+  { id: 'report', label: 'Report Generator', icon: FileText, color: '#8b5cf6' },
+  { id: 'complete', label: 'Complete', icon: CheckCircle, color: '#10b981' },
+];
 
+const AgentProgress = ({ currentStep, errors }) => {
   const getStepStatus = (stepId) => {
     if (stepId === currentStep) return 'current';
-    const stepIndex = agentSteps.findIndex(s => s.id === stepId);
-    const currentIndex = agentSteps.findIndex(s => s.id === currentStep);
-    
+    const stepIndex = AGENT_STEPS.findIndex(s => s.id === stepId);
+    const currentIndex = AGENT_STEPS.findIndex(s => s.id === currentStep);
     if (stepIndex < currentIndex) return 'completed';
     return 'pending';
   };
 
-  const getStepIcon = (status, hasError) => {
-    if (hasError) return <AlertCircle className="w-5 h-5 text-red-500" />;
-    if (status === 'completed') return <CheckCircle className="w-5 h-5 text-green-500" />;
-    if (status === 'current') return <motion.div animate={{ rotate: 360 }} transition={{ duration: 2, repeat: Infinity, ease: "linear" }}><Clock className="w-5 h-5 text-blue-500" /></motion.div>;
-    return <div className="w-5 h-5 rounded-full border-2 border-gray-600" />;
-  };
+  const hasError = errors && errors.length > 0;
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 20 }}
-      animate={{ opacity: 1, y: 0 }}
-      className="glass-dark rounded-2xl p-6 mb-8"
-    >
-      <h3 className="text-xl font-semibold mb-6 gradient-text">Research Progress</h3>
-      
-      <div className="space-y-4">
-        {agentSteps.map((step, index) => {
-          const status = getStepStatus(step.id);
-          const hasError = errors && errors.some(error => error.includes(step.label));
-          const isCompleted = status === 'completed';
-          const isCurrent = status === 'current';
-          
-          return (
-            <motion.div
-              key={step.id}
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: index * 0.1 }}
-              className={`flex items-center space-x-4 p-4 rounded-xl transition-all duration-300 ${
-                isCurrent ? 'bg-gradient-to-r from-blue-500/20 to-purple-500/20 border border-blue-500/30' :
-                isCompleted ? 'bg-green-500/10 border border-green-500/20' :
-                'bg-gray-800/50 border border-gray-700/30'
-              } ${hasError ? 'border-red-500/50 bg-red-500/10' : ''}`}
-            >
-              <div className="flex-shrink-0">
-                {getStepIcon(status, hasError)}
-              </div>
-              
-              <div className="flex-1">
-                <div className="flex items-center justify-between">
-                  <span className={`font-medium ${
-                    isCurrent ? 'text-blue-400' :
-                    isCompleted ? 'text-green-400' :
-                    hasError ? 'text-red-400' :
-                    'text-gray-400'
+    <div className="card p-5">
+      <div className="flex items-center justify-between mb-5">
+        <h3 className="text-sm font-semibold text-[#e2e8f0] flex items-center gap-2">
+          <Network className="w-4 h-4 text-[#818cf8]" />
+          12-Agent Workflow
+        </h3>
+        <span className="text-xs text-[#64748b]">
+          {AGENT_STEPS.findIndex(s => s.id === currentStep) + 1 || 0}/{AGENT_STEPS.length - 1} agents
+        </span>
+      </div>
+
+      <div className="relative">
+        <div className="absolute left-[11px] top-2 bottom-2 w-px bg-[rgba(99,102,241,0.1)]" />
+
+        <div className="space-y-0.5">
+          {AGENT_STEPS.filter(s => s.id !== 'complete').map((step, index) => {
+            const status = getStepStatus(step.id);
+            const isCurrent = status === 'current';
+            const isCompleted = status === 'completed';
+
+            return (
+              <motion.div
+                key={step.id}
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: index * 0.03 }}
+                className={`relative flex items-center gap-3 py-2 px-3 rounded-lg transition-all duration-300 ${
+                  isCurrent
+                    ? 'bg-[rgba(99,102,241,0.08)]'
+                    : isCompleted
+                    ? 'bg-[rgba(16,185,129,0.04)]'
+                    : ''
+                }`}
+              >
+                <div className={`relative z-10 w-[22px] h-[22px] rounded-full flex items-center justify-center flex-shrink-0 transition-all duration-300 ${
+                  isCompleted
+                    ? 'bg-[#10b981]'
+                    : isCurrent
+                    ? 'bg-[#6366f1]'
+                    : 'bg-[rgba(255,255,255,0.06)]'
+                }`}>
+                  {isCompleted ? (
+                    <CheckCircle className="w-3.5 h-3.5 text-white" />
+                  ) : isCurrent ? (
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
+                    >
+                      <Clock className="w-3 h-3 text-white" />
+                    </motion.div>
+                  ) : (
+                    <div className="w-1.5 h-1.5 rounded-full bg-[#64748b]" />
+                  )}
+                </div>
+
+                <div className="flex-1 min-w-0">
+                  <span className={`text-xs font-medium transition-colors duration-300 ${
+                    isCurrent ? 'text-[#818cf8]' : isCompleted ? 'text-[#34d399]' : 'text-[#64748b]'
                   }`}>
                     {step.label}
                   </span>
-                  {isCurrent && (
-                    <motion.span
-                      animate={{ opacity: [0.5, 1, 0.5] }}
-                      transition={{ duration: 2, repeat: Infinity }}
-                      className="text-sm text-blue-400"
-                    >
-                      In progress...
-                    </motion.span>
-                  )}
                 </div>
-                <p className="text-sm text-gray-400 mt-1">{step.description}</p>
-              </div>
-            </motion.div>
-          );
-        })}
+
+                {isCurrent && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex-shrink-0"
+                  >
+                    <span className="badge badge-primary text-[10px] px-2 py-0.5">Active</span>
+                  </motion.div>
+                )}
+                {isCompleted && (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    className="flex-shrink-0"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5 text-[#34d399]" />
+                  </motion.div>
+                )}
+              </motion.div>
+            );
+          })}
+        </div>
       </div>
-    </motion.div>
+
+      {hasError && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          className="mt-4 p-3 rounded-lg bg-[rgba(239,68,68,0.08)] border border-[rgba(239,68,68,0.15)]"
+        >
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-3.5 h-3.5 text-[#f87171] mt-0.5 flex-shrink-0" />
+            <div>
+              <p className="text-xs font-medium text-[#f87171]">Errors detected</p>
+              <p className="text-[10px] text-[#94a3b8] mt-0.5">{errors[0]}</p>
+            </div>
+          </div>
+        </motion.div>
+      )}
+    </div>
   );
 };
 

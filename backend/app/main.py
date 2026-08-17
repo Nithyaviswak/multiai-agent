@@ -1,22 +1,28 @@
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import asyncio
-from app.graph.workflow import research_workflow
+import json
+from app.graph.workflow import network_workflow
 from app.logging_config import logger
-from app.config import settings
+from app.config import settings, validate_settings
 from app.tools.rate_limiter import rate_limiter
+from app.tools.network.device_simulator import device_simulator
+from app.tools.memory import conversation_memory, project_memory
+from app.tools.audit import audit_logger
+from app.tools.evaluation import evaluation
+from app.tools.rbac import rbac
+from app.tools.guardrails import guardrails
+from app.tools.calling.registry import tool_registry
 
-# FastAPI app
 app = FastAPI(
-    title="Multi-Agent AI Research System",
-    description="Production-ready AI system with research, summarization, report writing, and fact checking agents",
-    version="1.0.0"
+    title="Multi-Agent AI Network Automation Platform",
+    description="Enterprise multi-agent platform with planner, knowledge, config, compliance, monitoring, automation, and report agents. Features hybrid RAG, tool calling, memory, human-in-the-loop approval, RBAC, audit logging, and evaluation pipelines.",
+    version="2.0.0"
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -25,152 +31,272 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Request models
-class ResearchRequest(BaseModel):
-    topic: str
-    max_retries: Optional[int] = 3
+# ── Request/Response Models ─────────────────────────────────────
+class NetworkRequest(BaseModel):
+    intent: str
+    environment: Optional[str] = "devnet-sandbox"
+    session_id: Optional[str] = "default"
+    user_id: Optional[str] = "engineer"
 
-class ResearchResponse(BaseModel):
+class NetworkResponse(BaseModel):
     success: bool
     data: Optional[Dict[str, Any]]
     error: Optional[str]
     workflow_id: Optional[str]
 
-# Global workflow state (in production, use Redis/Database)
+class ApprovalRequest(BaseModel):
+    workflow_id: str
+    approved: bool
+    user_id: str
+
+class MemoryQuery(BaseModel):
+    session_id: str
+
+class ToolCallRequest(BaseModel):
+    tool: str
+    params: Dict[str, Any]
+
+# ── Global workflow state ─────────────────────────────────────────
 workflow_state = {}
 
+def _prune_workflow_state():
+    """Keep in-memory workflow state bounded (LRU-ish eviction of oldest runs)."""
+    if len(workflow_state) > settings.MAX_WORKFLOW_STATE_ENTRIES:
+        evict = len(workflow_state) - settings.MAX_WORKFLOW_STATE_ENTRIES
+        for k in list(workflow_state)[:evict]:
+            workflow_state.pop(k, None)
+
+# ── WebSocket Connections ────────────────────────────────────────
+active_connections: Dict[str, WebSocket] = {}
+
+# ── Root ─────────────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    return {"message": "Multi-Agent AI Research System API"}
+    return {
+        "message": "Multi-Agent AI Network Automation Platform",
+        "version": "2.0.0",
+        "environments": list(device_simulator.get_environments().keys()),
+        "devices": [d["hostname"] for d in device_simulator.get_all_devices()],
+        "agents": ["Planner", "Knowledge", "Topology", "NETCONF", "Configuration",
+                    "Automation", "Verification", "Monitoring", "Compliance",
+                    "LogAnalyzer", "IncidentResponse", "ReportGenerator"],
+        "tools": [t["name"] for t in tool_registry.list_tools()],
+        "features": ["tool_calling", "memory", "human_approval", "rbac",
+                      "audit_logging", "evaluation", "guardrails", "websockets"],
+    }
 
-@app.post("/api/research", response_model=ResearchResponse)
-async def start_research(request: ResearchRequest, background_tasks: BackgroundTasks):
-    """Start research workflow"""
+# ── Workflow Endpoints ───────────────────────────────────────────
+@app.post("/api/network", response_model=NetworkResponse)
+async def start_network_workflow(request: NetworkRequest, background_tasks: BackgroundTasks):
     try:
-        # Rate limiting
-        await rate_limiter.check_limit()
-        
-        # Validate input
-        if not request.topic.strip():
-            raise HTTPException(status_code=400, detail="Topic is required")
-        
-        if len(request.topic) > 500:
-            raise HTTPException(status_code=400, detail="Topic too long")
-        
-        # Generate workflow ID
+        if not await rate_limiter.check_limit(request.user_id):
+            raise HTTPException(status_code=429, detail="Rate limit exceeded, try again later")
+
+        if not request.intent.strip():
+            raise HTTPException(status_code=400, detail="Network intent is required")
+
+        guard_check = guardrails.validate_input(request.intent)
+        if not guard_check["safe"]:
+            raise HTTPException(status_code=400, detail=f"Input blocked: {guard_check['issues']}")
+
         import uuid
         workflow_id = str(uuid.uuid4())
 
-        # Register workflow immediately so polling doesn't get 404 while background task starts
         workflow_state[workflow_id] = {
             "workflow_id": workflow_id,
-            "topic": request.topic,
-            "current_step": "research",
-            "status": "running"
+            "intent": request.intent,
+            "environment": request.environment,
+            "session_id": request.session_id,
+            "user_id": request.user_id,
+            "current_step": "plan",
+            "status": "running",
         }
-        
-        # Start workflow in background
-        background_tasks.add_task(run_workflow, workflow_id, request.topic)
-        
-        return ResearchResponse(
+
+        background_tasks.add_task(
+            run_workflow, workflow_id, request.intent, request.environment,
+            request.session_id, request.user_id
+        )
+
+        audit_logger.log("workflow_started", request.user_id, "workflow",
+                         {"intent": request.intent, "id": workflow_id})
+        _prune_workflow_state()
+
+        return NetworkResponse(
             success=True,
             data={"workflow_id": workflow_id, "status": "started"},
             error=None,
-            workflow_id=workflow_id
+            workflow_id=workflow_id,
         )
-        
     except HTTPException:
         raise
     except Exception as e:
         logger.error("API endpoint error", error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/api/research/{workflow_id}")
-async def get_research_result(workflow_id: str):
-    """Get workflow result by ID"""
+@app.get("/api/network/{workflow_id}")
+async def get_workflow_result(workflow_id: str):
     if workflow_id not in workflow_state:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    
     result = workflow_state[workflow_id]
-    
     if "error" in result:
-        return ResearchResponse(
-            success=False,
-            data=None,
-            error=result["error"],
-            workflow_id=workflow_id
-        )
-    
-    return ResearchResponse(
-        success=True,
-        data=result,
-        error=None,
-        workflow_id=workflow_id
-    )
+        return NetworkResponse(success=False, data=None, error=result["error"], workflow_id=workflow_id)
+    return NetworkResponse(success=True, data=result, error=None, workflow_id=workflow_id)
 
-@app.post("/api/generate-pdf/{workflow_id}")
-async def generate_pdf(workflow_id: str):
-    """Generate PDF for completed workflow"""
-    if workflow_id not in workflow_state:
+# ── Approval Endpoint ────────────────────────────────────────────
+@app.post("/api/approve")
+async def approve_action(req: ApprovalRequest):
+    if req.workflow_id not in workflow_state:
         raise HTTPException(status_code=404, detail="Workflow not found")
-    
-    result = workflow_state[workflow_id]
-    
-    if not result.get("report_complete"):
-        raise HTTPException(status_code=400, detail="Report not ready for PDF generation")
-    
-    try:
-        from app.utils.pdf_generator import pdf_generator
-        pdf_base64 = await pdf_generator.generate_pdf(result)
-        return {
-            "success": True,
-            "pdf_data": pdf_base64,
-            "mime_type": "application/pdf"
-        }
-    except OSError as e:
-        logger.error("PDF native dependency missing", error=str(e))
-        raise HTTPException(status_code=503, detail="PDF dependencies are not installed on this system")
-    except Exception as e:
-        logger.error("PDF generation API error", error=str(e))
-        raise HTTPException(status_code=500, detail="PDF generation failed")
 
-async def run_workflow(workflow_id: str, topic: str):
-    """Run workflow and store result"""
-    try:
-        logger.info("Starting workflow", workflow_id=workflow_id, topic=topic)
-        
-        result = await research_workflow.run(topic)
+    if not rbac.check_permission(req.user_id, "configure"):
+        raise HTTPException(status_code=403, detail="User lacks permission to approve")
 
-        # Store result
+    saved = workflow_state[req.workflow_id]
+    if saved.get("current_step") != "awaiting_approval":
+        raise HTTPException(status_code=400, detail="Workflow is not awaiting approval")
+
+    result = await network_workflow.resume_after_approval(saved, req.approved)
+    workflow_state[req.workflow_id] = result
+
+    audit_logger.log("approval", req.user_id, "workflow",
+                     {"workflow_id": req.workflow_id, "approved": req.approved},
+                     "approved" if req.approved else "denied")
+
+    return {"success": True, "approved": req.approved,
+            "status": result.get("terminal_status")}
+
+# ── Memory Endpoints ─────────────────────────────────────────────
+@app.post("/api/memory/history")
+async def get_conversation_history(req: MemoryQuery):
+    history = conversation_memory.get_history(req.session_id)
+    return {"success": True, "session_id": req.session_id, "messages": history}
+
+@app.post("/api/memory/context")
+async def get_project_context(req: MemoryQuery):
+    context = project_memory.get_recent_context(req.session_id)
+    return {"success": True, "session_id": req.session_id, "context": context}
+
+@app.post("/api/memory/undo")
+async def undo_last_change(req: MemoryQuery):
+    undone = project_memory.undo_last_config(req.session_id)
+    return {"success": bool(undone), "undone": undone}
+
+# ── Evaluation Endpoints ─────────────────────────────────────────
+@app.get("/api/evaluation/stats")
+async def get_evaluation_stats(agent: Optional[str] = None):
+    if agent:
+        return {"success": True, "agent": agent, "stats": evaluation.get_agent_stats(agent)}
+    return {"success": True, "stats": evaluation.get_summary()}
+
+@app.get("/api/runs/{run_id}")
+async def get_run_details(run_id: str):
+    """Observability endpoint: return the full state+trace+metrics for a run."""
+    run = evaluation.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return {"success": True, "run_id": run_id, "run": run}
+
+@app.get("/api/runs")
+async def list_runs(limit: int = 50):
+    runs = evaluation.get_summary().get("total_runs", 0)
+    return {"success": True, "total_runs": runs}
+
+# ── Audit Endpoints ──────────────────────────────────────────────
+@app.get("/api/audit/logs")
+async def get_audit_logs(limit: int = 100, action: Optional[str] = None):
+    return {"success": True, "logs": audit_logger.get_logs(limit, action)}
+
+@app.get("/api/audit/stats")
+async def get_audit_stats():
+    return {"success": True, "stats": audit_logger.get_stats()}
+
+# ── Tool Calling Endpoint ────────────────────────────────────────
+@app.post("/api/tools/call")
+async def call_tool(req: ToolCallRequest):
+    result = await tool_registry.call(req.tool, **req.params)
+    return {"success": result["success"], **result}
+
+@app.get("/api/tools/list")
+async def list_tools():
+    return {"success": True, "tools": tool_registry.list_tools()}
+
+# ── Device / Topology Endpoints ──────────────────────────────────
+@app.get("/api/devices")
+async def list_devices():
+    return {"success": True, "devices": device_simulator.get_all_devices(), "environments": device_simulator.get_environments()}
+
+@app.get("/api/topology")
+async def get_topology():
+    return {"success": True, "topology": device_simulator.get_topology()}
+
+@app.get("/api/environments")
+async def get_environments():
+    return {"success": True, "environments": device_simulator.get_environments()}
+
+# ── WebSocket for real-time streaming ────────────────────────────
+@app.websocket("/ws/{client_id}")
+async def websocket_endpoint(websocket: WebSocket, client_id: str):
+    await websocket.accept()
+    active_connections[client_id] = websocket
+    logger.info("WebSocket connected", client_id=client_id)
+    try:
+        while True:
+            data = await websocket.receive_text()
+            msg = json.loads(data)
+            if msg.get("action") == "start_workflow":
+                intent = msg.get("intent", "")
+                environment = msg.get("environment", "devnet-sandbox")
+                await websocket.send_json({"type": "status", "message": "Workflow started", "step": "plan"})
+                result = await network_workflow.run(intent, environment, client_id, client_id)
+                await websocket.send_json({"type": "complete", "result": result})
+            elif msg.get("action") == "ping":
+                await websocket.send_json({"type": "pong"})
+    except WebSocketDisconnect:
+        active_connections.pop(client_id, None)
+        logger.info("WebSocket disconnected", client_id=client_id)
+
+# ── Background Workflow Runner ──────────────────────────────────
+async def run_workflow(workflow_id: str, intent: str, environment: str,
+                       session_id: str = "default", user_id: str = "engineer"):
+    try:
+        logger.info("Starting workflow", workflow_id=workflow_id, intent=intent)
+        result = await network_workflow.run(intent, environment, session_id, user_id)
+
         if isinstance(result, dict):
             result.setdefault("workflow_id", workflow_id)
-            result.setdefault("topic", topic)
+            result.setdefault("intent", intent)
         workflow_state[workflow_id] = result
-        
-        logger.info("Workflow completed", 
-                   workflow_id=workflow_id, 
-                   success=result.get("current_step") == "complete")
-                   
+
+        # Notify WebSocket if connected
+        if session_id in active_connections:
+            try:
+                ws = active_connections[session_id]
+                await ws.send_json({"type": "workflow_complete", "workflow_id": workflow_id, "result": result})
+            except Exception:
+                pass
+
+        logger.info("Workflow completed", workflow_id=workflow_id, success=result.get("current_step") == "complete")
     except Exception as e:
         logger.error("Workflow execution failed", workflow_id=workflow_id, error=str(e))
-        workflow_state[workflow_id] = {
-            "error": str(e),
-            "success": False
-        }
+        workflow_state[workflow_id] = {"error": str(e), "success": False}
 
+# ── Lifecycle ────────────────────────────────────────────────────
 @app.on_event("startup")
-async def startup_event():
-    logger.info("Multi-Agent AI System starting up")
+async def startup():
+    logger.info("Network Automation Platform v2.0.0 starting")
+    problems = validate_settings()
+    if problems:
+        for problem in problems:
+            logger.error("Startup validation failed", problem=problem)
+        logger.error("Refusing to start: fix the configuration above (see backend/.env and .env.example).")
+        raise RuntimeError("; ".join(problems))
+    for env_name, env_data in device_simulator.get_environments().items():
+        logger.info("Environment available", name=env_data["name"], type=env_data["type"])
 
 @app.on_event("shutdown")
-async def shutdown_event():
-    logger.info("Multi-Agent AI System shutting down")
+async def shutdown():
+    logger.info("Network Automation Platform shutting down")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=settings.API_HOST,
-        port=settings.API_PORT,
-        reload=True
-    )
+    uvicorn.run("app.main:app", host=settings.API_HOST, port=settings.API_PORT, reload=True)
