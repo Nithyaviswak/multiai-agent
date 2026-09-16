@@ -1,4 +1,4 @@
-﻿# Multi AI Travelling Agent
+﻿# Multi-AI-Agent Trip Planner
 
 A provider-agnostic multi-agent travel-planning platform built on
 FastAPI + LangGraph + LangChain with a React (Claude-style) frontend.
