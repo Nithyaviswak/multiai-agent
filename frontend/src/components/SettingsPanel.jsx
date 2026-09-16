@@ -5,7 +5,7 @@ import {
   Plus, Trash2, Link2, ShieldCheck
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { networkAPI } from '../services/api';
+import { travelAPI } from '../services/api';
 
 const PROVIDER_META = {
   groq: { label: 'Groq', tip: 'console.groq.com — free open-source models (GPT-OSS, Qwen, Compound).', placeholder: 'gsk_…' },
@@ -99,9 +99,15 @@ const SettingsPanel = ({ open, onClose, onChanged }) => {
 
   const refresh = () => {
     setLoading(true);
-    Promise.all([networkAPI.getProviders(), networkAPI.getModels()])
+    Promise.all([travelAPI.getProviders(), travelAPI.getModels()])
       .then(([p, m]) => {
-        if (p.success) setProviders(p.providers || []);
+        if (p.success) {
+          const raw = p.providers || {};
+          const list = Array.isArray(raw)
+            ? raw
+            : Object.entries(raw).map(([name, info]) => ({ name, ...(info || {}) }));
+          setProviders(list);
+        }
         if (m.success) setModels(m.models || []);
       })
       .catch(() => toast.error('Could not load settings'))
@@ -111,7 +117,7 @@ const SettingsPanel = ({ open, onClose, onChanged }) => {
   useEffect(() => {
     if (!open) return;
     refresh();
-    networkAPI.getBaseUrls().then(r => {
+    travelAPI.getBaseUrls().then(r => {
       if (r.success && r.base_urls) {
         const presets = Object.entries(r.base_urls).map(([label, url]) => ({ label, url, example: '' }));
         if (presets.length) {
@@ -130,7 +136,7 @@ const SettingsPanel = ({ open, onClose, onChanged }) => {
     if (!val) { toast.error('Enter an API key first'); return; }
     setSaving(s => ({ ...s, [provider]: true }));
     try {
-      const r = await networkAPI.setProviderKey(provider, val);
+      const r = await travelAPI.setProviderKey(provider, val);
       if (r.success) {
         toast.success(`${(PROVIDER_META[provider] || {}).label || provider} key saved`);
         setKeys(k => ({ ...k, [provider]: '' }));
@@ -152,7 +158,7 @@ const SettingsPanel = ({ open, onClose, onChanged }) => {
     if (!formApiKey.trim()) { toast.error('Enter the API key for this model'); return; }
     setAdding(true);
     try {
-      const r = await networkAPI.addCustomModel(formName.trim(), mid, formApiKey.trim(), formBaseUrl);
+      const r = await travelAPI.addCustomModel(formName.trim(), mid, formApiKey.trim(), formBaseUrl);
       if (r.success) {
         toast.success(`Added ${r.model.name}`);
         setFormName(''); setFormModelId(''); setFormApiKey('');
@@ -171,7 +177,7 @@ const SettingsPanel = ({ open, onClose, onChanged }) => {
 
   const removeModel = async (mid) => {
     try {
-      const r = await networkAPI.removeCustomModel(mid);
+      const r = await travelAPI.removeCustomModel(mid);
       if (r.success) {
         toast.success('Model removed');
         refresh();
@@ -185,7 +191,7 @@ const SettingsPanel = ({ open, onClose, onChanged }) => {
   const customModels = models.filter(m => m.custom);
   const builtinByProvider = providerName =>
     models.filter(m => !m.custom && m.provider === providerName).length;
-  const providersWithCount = providers.map(p => ({ ...p, models: builtinByProvider(p.name) }));
+  const providersWithCount = (Array.isArray(providers) ? providers : []).map(p => ({ ...p, models: builtinByProvider(p.name) }));
 
   return (
     <AnimatePresence>

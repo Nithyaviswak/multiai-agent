@@ -10,7 +10,9 @@ services:
         value: 3.12.8
       - key: GROQ_API_KEY
         sync: false
+      - key: GOOGLE_MAPS_API_KEY
+        sync: false
       - key: TAVILY_API_KEY
         sync: false
       - key: LLM_MODEL
-        value: llama-3.1-8b-instant
+        value: openai/gpt-oss-20b

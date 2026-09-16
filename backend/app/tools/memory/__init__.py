@@ -25,29 +25,28 @@ class ConversationMemory:
 
 
 class ProjectMemory:
-    """Stores project-level state, configs, and preferences"""
+    """Stores per-trip context: planned trips, saved notes, and preferences"""
     def __init__(self):
-        self._projects: Dict[str, Dict[str, Any]] = {}
+        self._trips: Dict[str, Dict[str, Any]] = {}
         self._user_prefs: Dict[str, Dict[str, Any]] = {}
 
     def create_project(self, project_id: str, name: str, owner: str):
-        self._projects[project_id] = {
+        self._trips[project_id] = {
             "id": project_id,
             "name": name,
             "owner": owner,
             "created": datetime.now(timezone.utc).isoformat(),
-            "configs": [],
-            "devices": [],
-            "state": "active",
+            "notes": [],
+            "state": "planning",
         }
 
     def get_project(self, project_id: str) -> Optional[Dict[str, Any]]:
-        return self._projects.get(project_id)
+        return self._trips.get(project_id)
 
-    def add_config(self, project_id: str, config: Dict[str, Any]):
-        proj = self._projects.get(project_id)
-        if proj:
-            proj["configs"].append({**config, "timestamp": datetime.now(timezone.utc).isoformat()})
+    def add_note(self, project_id: str, note: Dict[str, Any]):
+        trip = self._trips.get(project_id)
+        if trip:
+            trip["notes"].append({**note, "timestamp": datetime.now(timezone.utc).isoformat()})
 
     def set_user_preference(self, user_id: str, key: str, value: Any):
         if user_id not in self._user_prefs:
@@ -58,18 +57,18 @@ class ProjectMemory:
         return self._user_prefs.get(user_id, {}).get(key, default)
 
     def get_recent_context(self, session_id: str, limit: int = 5) -> str:
-        if session_id not in self._projects:
+        trip = self._trips.get(session_id)
+        if not trip:
             return ""
-        proj = self._projects[session_id]
-        lines = [f"Project: {proj['name']}", f"State: {proj['state']}", f"Configs applied: {len(proj['configs'])}"]
-        for cfg in proj["configs"][-limit:]:
-            lines.append(f"  - {cfg.get('technology', 'unknown')} on {cfg.get('device', 'unknown')} at {cfg.get('timestamp', '')}")
+        lines = [f"Trip: {trip['name']}", f"State: {trip['state']}", f"Notes saved: {len(trip['notes'])}"]
+        for note in trip["notes"][-limit:]:
+            lines.append(f"  - {note.get('kind', 'note')}: {note.get('detail', '')} at {note.get('timestamp', '')}")
         return "\n".join(lines)
 
-    def undo_last_config(self, project_id: str) -> Optional[Dict[str, Any]]:
-        proj = self._projects.get(project_id)
-        if proj and proj["configs"]:
-            return proj["configs"].pop()
+    def undo_last_change(self, project_id: str) -> Optional[Dict[str, Any]]:
+        trip = self._trips.get(project_id)
+        if trip and trip["notes"]:
+            return trip["notes"].pop()
         return None
 
 

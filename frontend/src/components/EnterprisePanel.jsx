@@ -5,13 +5,13 @@ import {
   Database, Terminal, Users, Cpu, BarChart3, Sparkles
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
-import { networkAPI } from '../services/api';
+import { travelAPI } from '../services/api';
 
 const PALETTE = {
-  primary: '#D97757',
-  success: '#3F9142',
-  warning: '#B06000',
-  danger: '#C5523F',
+  primary: '#4F46E5',
+  success: '#16A34A',
+  warning: '#D97706',
+  danger: '#DC2626',
 };
 
 const MetricCard = ({ icon: Icon, label, value, sub, color = 'primary' }) => (
@@ -59,9 +59,9 @@ const EnterprisePanel = ({ workflowId }) => {
   const [evalStats, setEvalStats] = useState(null);
 
   useEffect(() => {
-    networkAPI.listTools().then(r => r.success && setTools(r.tools)).catch(() => {});
-    networkAPI.getAuditStats().then(r => r.success && setAuditStats(r.stats)).catch(() => {});
-    networkAPI.getEvalStats().then(r => r.success && setEvalStats(r.stats)).catch(() => {});
+    travelAPI.listTools().then(r => r.success && setTools(r.tools)).catch(() => {});
+    travelAPI.getAuditStats().then(r => r.success && setAuditStats(r.stats)).catch(() => {});
+    travelAPI.getEvalStats().then(r => r.success && setEvalStats(r.stats)).catch(() => {});
   }, [workflowId]);
 
   return (
@@ -82,7 +82,7 @@ const EnterprisePanel = ({ workflowId }) => {
           <div className="space-y-1 max-h-40 overflow-y-auto">
             {tools.map(t => (
               <div key={t.name} className={`flex items-center gap-2 text-xs ${'text-ink-soft'} py-1`}>
-                <CheckCircle className="w-3 h-3 text-[#3F9142] flex-shrink-0" />
+                <CheckCircle className="w-3 h-3 text-success flex-shrink-0" />
                 <span className="truncate">{t.name}</span>
               </div>
             ))}
@@ -94,7 +94,7 @@ const EnterprisePanel = ({ workflowId }) => {
         <div className="space-y-2.5 text-xs text-ink-soft">
           <div className="flex items-center gap-2.5">
             <Clock className="w-3.5 h-3.5 text-ink-mute" />
-            <span>Session: {workflowId ? <span className="text-[#3F9142] font-medium">Active</span> : 'None'}</span>
+            <span>Session: {workflowId ? <span className="text-success font-medium">Active</span> : 'None'}</span>
           </div>
           <div className="flex items-center gap-2.5">
             <Users className="w-3.5 h-3.5 text-ink-mute" />
@@ -102,7 +102,7 @@ const EnterprisePanel = ({ workflowId }) => {
           </div>
           <div className="flex items-center gap-2.5">
             <Shield className="w-3.5 h-3.5 text-ink-mute" />
-            <span>Guardrails: <span className="text-[#3F9142] font-medium">Active</span></span>
+            <span>Guardrails: <span className="text-success font-medium">Active</span></span>
           </div>
           <div className="flex items-center gap-2.5">
             <AlertTriangle className="w-3.5 h-3.5 text-ink-mute" />
@@ -126,7 +126,7 @@ const EnterprisePanel = ({ workflowId }) => {
             </div>
             <div className={`flex justify-between ${'text-ink-soft'}`}>
               <span>Success Rate</span>
-              <span className="font-medium text-[#3F9142]">
+              <span className="font-medium text-success">
                 {evalStats.total_actions > 0
                   ? Math.round((evalStats.successful_actions / evalStats.total_actions) * 100)
                   : 0}%

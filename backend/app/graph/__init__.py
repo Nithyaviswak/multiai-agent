@@ -1,3 +1,3 @@
-from app.graph.workflow import network_workflow
+from app.graph.workflow import travel_workflow
 
-__all__ = ["network_workflow"]
+__all__ = ["travel_workflow"]

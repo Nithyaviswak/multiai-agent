@@ -1,31 +1,29 @@
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional, Dict, Any, List
-import asyncio
 import json
-from app.graph.workflow import network_workflow
+import uuid
+from app.graph.workflow import travel_workflow
 from app.logging_config import logger
-from app.config import settings, validate_settings
+from app.config import settings, validate_settings, validate_optional
 from app.tools.rate_limiter import rate_limiter
-from app.tools.network.device_simulator import device_simulator
 from app.tools.memory import conversation_memory, project_memory
 from app.tools.audit import audit_logger
 from app.tools.evaluation import evaluation
-from app.tools.rbac import rbac
 from app.tools.guardrails import guardrails
 from app.tools.calling.registry import tool_registry
 from app.tools.model_registry import (
-    list_models, get_model, PROVIDERS, register_custom_model, unregister_custom_model,
+    list_models, get_model, register_custom_model, unregister_custom_model,
     list_base_urls,
 )
 from app.tools.keyring import keyring
+from app.tools.geo.maps_client import maps_client
 
 app = FastAPI(
-    title="Multi-Agent AI Network Automation Platform",
-    description="Enterprise multi-agent platform with planner, knowledge, config, compliance, monitoring, automation, and report agents. Features hybrid RAG, tool calling, memory, human-in-the-loop approval, RBAC, audit logging, and evaluation pipelines.",
-    version="2.0.0"
+    title="Multi-Agent AI Travelling Agent",
+    description="Multi-agent travel planner: per-mode route agents (car, bus, train, bike), restaurant lookup by meal (tiffin, lunch, dinner), place discovery within a time budget, and a timed itinerary builder. Real Google Maps Directions + Places data.",
+    version="1.0.0"
 )
 
 app.add_middleware(
@@ -37,22 +35,22 @@ app.add_middleware(
 )
 
 # ── Request/Response Models ─────────────────────────────────────
-class NetworkRequest(BaseModel):
+class TravelRequest(BaseModel):
     intent: str
-    environment: Optional[str] = "devnet-sandbox"
+    origin: Optional[str] = None
+    destination: Optional[str] = None
+    travel_modes: Optional[List[str]] = None
+    meal_types: Optional[List[str]] = None
+    time_budget_minutes: Optional[int] = None
+    preferences: Optional[Dict[str, Any]] = None
     session_id: Optional[str] = "default"
     user_id: Optional[str] = "engineer"
 
-class NetworkResponse(BaseModel):
+class TravelResponse(BaseModel):
     success: bool
     data: Optional[Dict[str, Any]]
     error: Optional[str]
     workflow_id: Optional[str]
-
-class ApprovalRequest(BaseModel):
-    workflow_id: str
-    approved: bool
-    user_id: str
 
 class MemoryQuery(BaseModel):
     session_id: str
@@ -93,7 +91,7 @@ active_model = settings.LLM_MODEL
 
 def _apply_active_model() -> None:
     """Push the active model to every agent in the running workflow."""
-    network_workflow.set_model(active_model)
+    travel_workflow.set_model(active_model)
 
 # ── WebSocket Connections ────────────────────────────────────────
 active_connections: Dict[str, WebSocket] = {}
@@ -102,39 +100,43 @@ active_connections: Dict[str, WebSocket] = {}
 @app.get("/")
 async def root():
     return {
-        "message": "Multi-Agent AI Network Automation Platform",
-        "version": "2.0.0",
-        "environments": list(device_simulator.get_environments().keys()),
-        "devices": [d["hostname"] for d in device_simulator.get_all_devices()],
-        "agents": ["Planner", "Knowledge", "Topology", "NETCONF", "Configuration",
-                    "Automation", "Verification", "Monitoring", "Compliance",
-                    "LogAnalyzer", "IncidentResponse", "ReportGenerator"],
+        "message": "Multi-Agent AI Travelling Agent",
+        "version": "1.0.0",
+        "agents": ["TravelPlanner", "CarRoute", "BusRoute", "TrainRoute", "BikeRoute",
+                    "RouteComparator", "Knowledge", "Restaurant", "Places",
+                    "Itinerary", "ReportGenerator"],
+        "travel_modes": ["car", "bus", "train", "bike"],
+        "meal_types": ["tiffin", "lunch", "dinner"],
         "tools": [t["name"] for t in tool_registry.list_tools()],
-        "features": ["tool_calling", "memory", "human_approval", "rbac",
-                      "audit_logging", "evaluation", "guardrails", "websockets"],
+        "features": ["tool_calling", "memory", "audit_logging",
+                      "evaluation", "guardrails", "websockets", "google_maps"],
+        "maps_configured": maps_client.has_credentials(),
     }
 
 # ── Workflow Endpoints ───────────────────────────────────────────
-@app.post("/api/network", response_model=NetworkResponse)
-async def start_network_workflow(request: NetworkRequest, background_tasks: BackgroundTasks):
+@app.post("/api/travel", response_model=TravelResponse)
+async def start_travel_workflow(request: TravelRequest, background_tasks: BackgroundTasks):
     try:
         if not await rate_limiter.check_limit(request.user_id):
             raise HTTPException(status_code=429, detail="Rate limit exceeded, try again later")
 
         if not request.intent.strip():
-            raise HTTPException(status_code=400, detail="Network intent is required")
+            raise HTTPException(status_code=400, detail="Travel intent is required")
 
         guard_check = guardrails.validate_input(request.intent)
         if not guard_check["safe"]:
             raise HTTPException(status_code=400, detail=f"Input blocked: {guard_check['issues']}")
 
-        import uuid
         workflow_id = str(uuid.uuid4())
 
         workflow_state[workflow_id] = {
             "workflow_id": workflow_id,
             "intent": request.intent,
-            "environment": request.environment,
+            "origin": request.origin,
+            "destination": request.destination,
+            "travel_modes": request.travel_modes,
+            "meal_types": request.meal_types,
+            "time_budget_minutes": request.time_budget_minutes,
             "session_id": request.session_id,
             "user_id": request.user_id,
             "current_step": "plan",
@@ -142,15 +144,18 @@ async def start_network_workflow(request: NetworkRequest, background_tasks: Back
         }
 
         background_tasks.add_task(
-            run_workflow, workflow_id, request.intent, request.environment,
-            request.session_id, request.user_id
+            run_workflow, workflow_id,
+            intent=request.intent, origin=request.origin, destination=request.destination,
+            travel_modes=request.travel_modes, meal_types=request.meal_types,
+            time_budget_minutes=request.time_budget_minutes, preferences=request.preferences,
+            session_id=request.session_id, user_id=request.user_id,
         )
 
         audit_logger.log("workflow_started", request.user_id, "workflow",
                          {"intent": request.intent, "id": workflow_id})
         _prune_workflow_state()
 
-        return NetworkResponse(
+        return TravelResponse(
             success=True,
             data={"workflow_id": workflow_id, "status": "started"},
             error=None,
@@ -162,37 +167,14 @@ async def start_network_workflow(request: NetworkRequest, background_tasks: Back
         logger.error("API endpoint error", error=str(e))
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@app.get("/api/network/{workflow_id}")
-async def get_workflow_result(workflow_id: str):
+@app.get("/api/travel/{workflow_id}")
+async def get_travel_result(workflow_id: str):
     if workflow_id not in workflow_state:
         raise HTTPException(status_code=404, detail="Workflow not found")
     result = workflow_state[workflow_id]
-    if "error" in result:
-        return NetworkResponse(success=False, data=None, error=result["error"], workflow_id=workflow_id)
-    return NetworkResponse(success=True, data=result, error=None, workflow_id=workflow_id)
-
-# ── Approval Endpoint ────────────────────────────────────────────
-@app.post("/api/approve")
-async def approve_action(req: ApprovalRequest):
-    if req.workflow_id not in workflow_state:
-        raise HTTPException(status_code=404, detail="Workflow not found")
-
-    if not rbac.check_permission(req.user_id, "configure"):
-        raise HTTPException(status_code=403, detail="User lacks permission to approve")
-
-    saved = workflow_state[req.workflow_id]
-    if saved.get("current_step") != "awaiting_approval":
-        raise HTTPException(status_code=400, detail="Workflow is not awaiting approval")
-
-    result = await network_workflow.resume_after_approval(saved, req.approved)
-    workflow_state[req.workflow_id] = result
-
-    audit_logger.log("approval", req.user_id, "workflow",
-                     {"workflow_id": req.workflow_id, "approved": req.approved},
-                     "approved" if req.approved else "denied")
-
-    return {"success": True, "approved": req.approved,
-            "status": result.get("terminal_status")}
+    if "error" in result and isinstance(result.get("error"), str):
+        return TravelResponse(success=False, data=None, error=result["error"], workflow_id=workflow_id)
+    return TravelResponse(success=True, data=result, error=None, workflow_id=workflow_id)
 
 # ── Memory Endpoints ─────────────────────────────────────────────
 @app.post("/api/memory/history")
@@ -207,7 +189,7 @@ async def get_project_context(req: MemoryQuery):
 
 @app.post("/api/memory/undo")
 async def undo_last_change(req: MemoryQuery):
-    undone = project_memory.undo_last_config(req.session_id)
+    undone = project_memory.undo_last_change(req.session_id)
     return {"success": bool(undone), "undone": undone}
 
 # ── Evaluation Endpoints ─────────────────────────────────────────
@@ -328,7 +310,6 @@ async def set_provider_key(req: ProviderKeyRequest):
         keyring.set_key(req.provider, req.key)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    # Rebuild clients with the new key for the active model's provider.
     _apply_active_model()
     audit_logger.log("provider_key_updated", "engineer", "workflow",
                      {"provider": req.provider}, "success")
@@ -367,18 +348,10 @@ async def call_tool(req: ToolCallRequest):
 async def list_tools():
     return {"success": True, "tools": tool_registry.list_tools()}
 
-# ── Device / Topology Endpoints ──────────────────────────────────
-@app.get("/api/devices")
-async def list_devices():
-    return {"success": True, "devices": device_simulator.get_all_devices(), "environments": device_simulator.get_environments()}
-
-@app.get("/api/topology")
-async def get_topology():
-    return {"success": True, "topology": device_simulator.get_topology()}
-
-@app.get("/api/environments")
-async def get_environments():
-    return {"success": True, "environments": device_simulator.get_environments()}
+# ── Maps status endpoint ─────────────────────────────────────────
+@app.get("/api/maps/status")
+async def maps_status():
+    return {"success": True, "configured": maps_client.has_credentials()}
 
 # ── WebSocket for real-time streaming ────────────────────────────
 @app.websocket("/ws/{client_id}")
@@ -390,11 +363,21 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         while True:
             data = await websocket.receive_text()
             msg = json.loads(data)
-            if msg.get("action") == "start_workflow":
+            if msg.get("action") == "start_travel":
                 intent = msg.get("intent", "")
-                environment = msg.get("environment", "devnet-sandbox")
-                await websocket.send_json({"type": "status", "message": "Workflow started", "step": "plan"})
-                result = await network_workflow.run(intent, environment, client_id, client_id)
+
+                async def _on_step(step: str):
+                    await websocket.send_json({"type": "step", "step": step})
+
+                await websocket.send_json({"type": "status", "message": "Travel plan started", "step": "plan"})
+                result = await travel_workflow.run(
+                    intent,
+                    origin=msg.get("origin"), destination=msg.get("destination"),
+                    travel_modes=msg.get("travel_modes"), meal_types=msg.get("meal_types"),
+                    time_budget_minutes=msg.get("time_budget_minutes"),
+                    session_id=client_id, user_id=client_id,
+                    on_step=_on_step,
+                )
                 await websocket.send_json({"type": "complete", "result": result})
             elif msg.get("action") == "ping":
                 await websocket.send_json({"type": "pong"})
@@ -403,19 +386,39 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
         logger.info("WebSocket disconnected", client_id=client_id)
 
 # ── Background Workflow Runner ──────────────────────────────────
-async def run_workflow(workflow_id: str, intent: str, environment: str,
+async def run_workflow(workflow_id: str, intent: str,
+                       origin: Optional[str] = None, destination: Optional[str] = None,
+                       travel_modes: Optional[List[str]] = None,
+                       meal_types: Optional[List[str]] = None,
+                       time_budget_minutes: Optional[int] = None,
+                       preferences: Optional[Dict[str, Any]] = None,
                        session_id: str = "default", user_id: str = "engineer"):
+    async def _on_step(step: str):
+        entry = workflow_state.get(workflow_id) or {}
+        entry["current_step"] = step
+        entry["status"] = "running"
+        workflow_state[workflow_id] = entry
+        if session_id in active_connections:
+            try:
+                await active_connections[session_id].send_json({"type": "step", "step": step})
+            except Exception:
+                pass
+
     try:
-        logger.info("Starting workflow", workflow_id=workflow_id, intent=intent)
-        result = await network_workflow.run(intent, environment, session_id, user_id,
-                                            run_id=workflow_id)
+        logger.info("Starting travel workflow", workflow_id=workflow_id, intent=intent)
+        result = await travel_workflow.run(
+            intent, origin=origin, destination=destination,
+            travel_modes=travel_modes, meal_types=meal_types,
+            time_budget_minutes=time_budget_minutes, preferences=preferences,
+            session_id=session_id, user_id=user_id, run_id=workflow_id,
+            on_step=_on_step,
+        )
 
         if isinstance(result, dict):
             result.setdefault("workflow_id", workflow_id)
             result.setdefault("intent", intent)
         workflow_state[workflow_id] = result
 
-        # Notify WebSocket if connected
         if session_id in active_connections:
             try:
                 ws = active_connections[session_id]
@@ -423,29 +426,31 @@ async def run_workflow(workflow_id: str, intent: str, environment: str,
             except Exception:
                 pass
 
-        logger.info("Workflow completed", workflow_id=workflow_id, success=result.get("current_step") == "complete")
+        logger.info("Travel workflow completed", workflow_id=workflow_id,
+                    success=result.get("current_step") == "complete")
     except Exception as e:
-        logger.error("Workflow execution failed", workflow_id=workflow_id, error=str(e))
+        logger.error("Travel workflow execution failed", workflow_id=workflow_id, error=str(e))
         workflow_state[workflow_id] = {"error": str(e), "success": False}
 
 # ── Lifecycle ────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup():
-    logger.info("Network Automation Platform v2.0.0 starting")
+    logger.info("Multi-Agent Travelling Agent starting")
     problems = validate_settings()
     if problems:
         for problem in problems:
             logger.error("Startup validation failed", problem=problem)
         logger.error("Refusing to start: fix the configuration above (see backend/.env and .env.example).")
         raise RuntimeError("; ".join(problems))
-    for env_name, env_data in device_simulator.get_environments().items():
-        logger.info("Environment available", name=env_data["name"], type=env_data["type"])
+    for warning in validate_optional():
+        logger.warning("Startup warning", problem=warning)
     _apply_active_model()
     logger.info("Active model", model=active_model)
+    logger.info("Google Maps client configured", configured=maps_client.has_credentials())
 
 @app.on_event("shutdown")
 async def shutdown():
-    logger.info("Network Automation Platform shutting down")
+    logger.info("Multi-Agent Travelling Agent shutting down")
 
 if __name__ == "__main__":
     import uvicorn

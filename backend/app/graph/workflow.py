@@ -1,33 +1,32 @@
 from langgraph.graph import StateGraph, END
-from typing import Dict, Any, Callable, Awaitable
+from typing import Dict, Any, Callable, Awaitable, Optional, List
 import time
 import asyncio
 import uuid
 
-from app.agents.planner_agent import PlannerAgent
-from app.agents.topology_agent import TopologyAgent
+from app.agents.travel_planner_agent import TravelPlannerAgent
+from app.agents.mode_route_agent import CarRouteAgent, BusRouteAgent, TrainRouteAgent, BikeRouteAgent
+from app.agents.route_comparator_agent import RouteComparatorAgent
 from app.agents.knowledge_agent import KnowledgeAgent
-from app.agents.netconf_agent import NETCONFAgent
-from app.agents.configuration_agent import ConfigurationAgent
-from app.agents.automation_agent import AutomationAgent
-from app.agents.verification_agent import VerificationAgent
-from app.agents.monitoring_agent import MonitoringAgent
-from app.agents.compliance_checker_agent import ComplianceCheckerAgent
-from app.agents.log_analyzer_agent import LogAnalyzerAgent
-from app.agents.incident_response_agent import IncidentResponseAgent
+from app.agents.restaurant_agent import RestaurantAgent
+from app.agents.places_agent import PlacesAgent
+from app.agents.itinerary_agent import ItineraryAgent
 from app.agents.report_generator_agent import ReportGeneratorAgent
 from app.schemas.state import AgentState
 from app.tools.memory import conversation_memory, project_memory
 from app.tools.audit import audit_logger
 from app.tools.evaluation import evaluation
-from app.tools.guardrails import guardrails
-from app.tools.calling.registry import tool_registry
 from app.logging_config import logger
 from app.config import settings
 
 
-class NetworkWorkflow:
-    """Enterprise LangGraph workflow with memory, human approval, and evaluation.
+class TravelWorkflow:
+    """LangGraph travel-planning workflow with memory and evaluation.
+
+    The graph is a single sequential chain. (The pinned langgraph 0.0.30 has no
+    ``Send``/fan-out support, so per-mode route agents and research agents run
+    consecutively rather than in true parallel; the idempotency check in
+    ``_run_step`` makes extra runs cheap.)
 
     Failure handling contract:
       - each staged agent runs inside ``_run_step`` which applies a bounded retry
@@ -35,44 +34,38 @@ class NetworkWorkflow:
       - an agent that still fails records the error and returns ``*_complete=False``.
       - every node is followed by a failure-aware router that either continues to
         the next step or terminates with ``terminal_status="error"``.
-      - mutating actions pause at the approval gate; ``resume_after_approval``
-        re-enters the graph and all completed steps pass through as no-ops, so
-        only report generation executes on resume.
-
-    Determinism: completed steps are idempotent on resume, and ``run()`` always
-    returns a serializable state with a truthful ``current_step``/``terminal_status``.
     """
 
-    STEPS = [
-        {"node": "plan", "field": "intent_complete"},
-        {"node": "discover_topology", "field": "topology_complete"},
-        {"node": "gather_knowledge", "field": "knowledge_complete"},
-        {"node": "gather_netconf", "field": "netconf_complete"},
-        {"node": "generate_config", "field": "config_complete"},
-        {"node": "run_automation", "field": "automation_complete"},
-        {"node": "verify_config", "field": "verification_complete"},
-        {"node": "monitor", "field": "monitoring_complete"},
-        {"node": "check_compliance", "field": "compliance_complete"},
-        {"node": "analyze_logs", "field": "log_analysis_complete"},
-        {"node": "respond_incident", "field": "incident_complete"},
-    ]
+    # Node name -> completion field.
+    FIELDS = {
+        "plan": "plan_complete",
+        "route_car": "route_car_complete",
+        "route_bus": "route_bus_complete",
+        "route_train": "route_train_complete",
+        "route_bike": "route_bike_complete",
+        "route_compare": "route_complete",
+        "gather_knowledge": "knowledge_complete",
+        "find_restaurants": "restaurants_complete",
+        "find_places": "places_complete",
+        "build_itinerary": "itinerary_complete",
+        "generate_report": "summary_complete",
+    }
 
-    # Node names -> agents kept cached so we can reuse instances across runs.
     def __init__(self):
         self.agents = {
-            "plan": PlannerAgent(),
-            "discover_topology": TopologyAgent(),
+            "plan": TravelPlannerAgent(),
+            "route_car": CarRouteAgent(),
+            "route_bus": BusRouteAgent(),
+            "route_train": TrainRouteAgent(),
+            "route_bike": BikeRouteAgent(),
+            "route_compare": RouteComparatorAgent(),
             "gather_knowledge": KnowledgeAgent(),
-            "gather_netconf": NETCONFAgent(),
-            "generate_config": ConfigurationAgent(),
-            "run_automation": AutomationAgent(),
-            "verify_config": VerificationAgent(),
-            "monitor": MonitoringAgent(),
-            "check_compliance": ComplianceCheckerAgent(),
-            "analyze_logs": LogAnalyzerAgent(),
-            "respond_incident": IncidentResponseAgent(),
+            "find_restaurants": RestaurantAgent(),
+            "find_places": PlacesAgent(),
+            "build_itinerary": ItineraryAgent(),
             "generate_report": ReportGeneratorAgent(),
         }
+        self._on_step: Optional[Callable[[str], Awaitable[None]]] = None
         self.graph = self._build_graph()
 
     def set_model(self, model: str) -> None:
@@ -83,50 +76,49 @@ class NetworkWorkflow:
     def _build_graph(self) -> StateGraph:
         workflow = StateGraph(AgentState)
 
-        for step in self.STEPS:
-            workflow.add_node(step["node"], self._make_step_node(step["node"]))
-
-        workflow.add_node("approval_gate", self._approval_gate_node)
-        workflow.add_node("generate_report", self._report_node)
+        for node in self.FIELDS:
+            workflow.add_node(node, self._make_node(node))
 
         workflow.set_entry_point("plan")
 
-        for i, step in enumerate(self.STEPS):
-            _next = self.STEPS[i + 1]["node"] if i + 1 < len(self.STEPS) else "approval_gate"
-            router = self._make_router(step["field"])
+        # Sequential chain with failure-aware routing after every node.
+        chain = list(self.FIELDS.keys())
+        for idx, node in enumerate(chain):
+            if idx == len(chain) - 1:
+                workflow.add_conditional_edges(
+                    node, self._make_router(self.FIELDS[node]),
+                    {"continue": END, "error": END},
+                )
+                continue
             workflow.add_conditional_edges(
-                step["node"], router, {"continue": _next, "error": END}
+                node, self._make_router(self.FIELDS[node]),
+                {"continue": chain[idx + 1], "error": END},
             )
 
-        workflow.add_conditional_edges(
-            "approval_gate",
-            self._route_approval,
-            {"continue": "generate_report", "error": END, "awaiting": END},
-        )
-
-        workflow.add_edge("generate_report", END)
         return workflow.compile()
 
     # ── Node wrappers ────────────────────────────────────────────
-    def _make_step_node(self, node: str) -> Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]:
+    def _make_node(self, node: str) -> Callable[[Dict[str, Any]], Awaitable[Dict[str, Any]]]:
         async def wrapper(state: Dict[str, Any]) -> Dict[str, Any]:
-            step_cfg = next(s for s in self.STEPS if s["node"] == node)
-            return await self._run_step(state, node, self.agents[node], step_cfg["field"])
+            if self._on_step:
+                try:
+                    await self._on_step(node)
+                except Exception:
+                    pass
+            return await self._run_step(state, node, self.agents[node], self.FIELDS[node])
         return wrapper
 
     async def _run_step(self, state: Dict[str, Any], node: str, agent: Any,
                         success_field: str) -> Dict[str, Any]:
         """Run one agent with bounded retry + timing; never raises.
 
-        Idempotency: if the step already succeeded, return a no-op so resumed
-        approval flows skip completed work instead of re-invoking the LLM.
+        Idempotency: if the step already succeeded, return a no-op.
         """
-        # Already completed (resume pass-through) - record a lightweight trace entry.
         if state.get(success_field) is True:
             self._append_trace(state, node, time.time(), attempt=1, skipped=True)
             return {}
 
-        if state.get("terminal_status") in ("error", "awaiting_approval"):
+        if state.get("terminal_status") == "error":
             return {}
 
         attempt = 0
@@ -166,69 +158,6 @@ class NetworkWorkflow:
             "current_step": "error",
         }
 
-    async def _approval_gate_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """Gate mutating actions behind human approval before report generation."""
-        if state.get("terminal_status") in ("error", "awaiting_approval"):
-            return {}
-
-        action = (state.get("intent_data") or {}).get("action", "analyze")
-        if action not in ("configure", "push", "delete"):
-            return {"requires_approval": False, "current_step": "report"}
-
-        # On resume the user already approved - proceed to report.
-        if state.get("approved"):
-            return {"approved": True, "current_step": "report"}
-
-        approval_id = f"APR-{abs(hash(str(state.get('run_id', '')))) % 100000:05d}"
-        config_summary = {
-            "approval_id": approval_id,
-            "action": action,
-            "devices": (state.get("intent_data") or {}).get("target_devices", []),
-            "technology": (state.get("config_data") or {}).get("technology", "N/A"),
-        }
-        audit_logger.log("approval_required", state.get("user_id", "unknown"), "config",
-                         config_summary, "pending")
-        return {
-            "requires_approval": True,
-            "approved": False,
-            "approval_id": approval_id,
-            "terminal_status": "awaiting_approval",
-            "current_step": "awaiting_approval",
-        }
-
-    async def _report_node(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        if state.get("terminal_status") == "error":
-            return self._graceful_error_report(state)
-        start = time.time()
-        try:
-            result = await self.agents["generate_report"].process(state)
-            session_id = state.get("session_id", "default")
-            conversation_memory.add_message(session_id, "assistant",
-                                            str(result.get("summary_data", {})))
-            self._append_trace(state, "generate_report", start)
-            evaluation.track("generate_report", "step", True, (time.time() - start) * 1000)
-            return {**result, "terminal_status": "complete", "current_step": "complete"}
-        except Exception as e:
-            self._append_trace(state, "generate_report", start, error=str(e))
-            evaluation.track("generate_report", "step", False, (time.time() - start) * 1000)
-            return self._graceful_error_report(state, error=str(e))
-
-    def _graceful_error_report(self, state: Dict[str, Any], error: str = None) -> Dict[str, Any]:
-        errors = list(state.get("errors", []))
-        if error:
-            errors.append(error)
-        return {
-            "summary_complete": True,
-            "summary_data": {
-                "workflow_status": "failed",
-                "errors": errors,
-                "message": "Workflow did not complete successfully. See errors for details.",
-            },
-            "terminal_status": "error",
-            "current_step": "error",
-            "errors": errors,
-        }
-
     # ── Routers ──────────────────────────────────────────────────
     def _make_router(self, field: str) -> Callable[[Dict[str, Any]], str]:
         def route(state: Dict[str, Any]) -> str:
@@ -238,14 +167,6 @@ class NetworkWorkflow:
                 return "error"
             return "continue"
         return route
-
-    def _route_approval(self, state: Dict[str, Any]) -> str:
-        ts = state.get("terminal_status")
-        if ts == "error":
-            return "error"
-        if ts == "awaiting_approval":
-            return "awaiting"
-        return "continue"
 
     # ── Observability helpers ────────────────────────────────────
     def _append_trace(self, state: Dict[str, Any], node: str, start: float,
@@ -264,41 +185,51 @@ class NetworkWorkflow:
         state.setdefault("trace", []).append(entry)
 
     # ── Public entrypoint ────────────────────────────────────────
-    async def run(self, intent: str, environment: str = "devnet-sandbox",
+    async def run(self, intent: str, *, origin: Optional[str] = None,
+                  destination: Optional[str] = None, travel_modes: Optional[List[str]] = None,
+                  meal_types: Optional[List[str]] = None,
+                  time_budget_minutes: Optional[int] = None,
+                  preferences: Optional[Dict[str, Any]] = None,
                   session_id: str = "default", user_id: str = "engineer",
-                  project_id: str = None, run_id: str = None) -> Dict[str, Any]:
+                  project_id: str = None, run_id: str = None,
+                  on_step: Optional[Callable[[str], Awaitable[None]]] = None) -> Dict[str, Any]:
         pid = project_id or session_id
         run_id = run_id or str(uuid.uuid4())
-        project_memory.create_project(pid, f"Project: {intent[:30]}", user_id)
+        project_memory.create_project(pid, f"Trip: {intent[:30]}", user_id)
 
         initial_state: Dict[str, Any] = {
             "intent": intent,
             "run_id": run_id,
-            "intent_complete": False,
-            "intent_data": None,
+            "origin": origin,
+            "destination": destination,
+            "travel_modes": list(travel_modes or []),
+            "meal_types": list(meal_types or []),
+            "time_budget_minutes": time_budget_minutes,
+            "preferences": preferences or {},
+            "plan_complete": False,
+            "plan_data": None,
+            "route_car_complete": False,
+            "route_car_data": None,
+            "route_bus_complete": False,
+            "route_bus_data": None,
+            "route_train_complete": False,
+            "route_train_data": None,
+            "route_bike_complete": False,
+            "route_bike_data": None,
+            "route_complete": False,
+            "route_data": None,
+            "knowledge_complete": False,
             "knowledge_data": None,
-            "topology_complete": False,
-            "topology_data": None,
-            "netconf_complete": False,
-            "netconf_data": None,
-            "config_complete": False,
-            "config_data": None,
-            "automation_data": None,
-            "verification_complete": False,
-            "verification_data": None,
-            "monitoring_data": None,
-            "compliance_complete": False,
-            "compliance_data": None,
-            "log_analysis_complete": False,
-            "log_analysis_data": None,
-            "incident_response_data": None,
+            "restaurants_complete": False,
+            "restaurants_data": None,
+            "places_complete": False,
+            "places_data": None,
+            "itinerary_complete": False,
+            "itinerary_data": None,
             "summary_data": None,
             "summary_complete": False,
             "session_id": session_id,
             "user_id": user_id,
-            "requires_approval": False,
-            "approved": False,
-            "approval_id": None,
             "errors": [],
             "current_step": "plan",
             "retry_count": 0,
@@ -311,6 +242,8 @@ class NetworkWorkflow:
         overall_start = time.time()
         from app.tools.calling.registry import current_run_id as _run_ctx
         token = _run_ctx.set(run_id)
+        prev_hook = self._on_step
+        self._on_step = on_step
         try:
             result = await self.graph.ainvoke(initial_state, {"recursion_limit": 50})
             result.setdefault("run_id", run_id)
@@ -333,60 +266,13 @@ class NetworkWorkflow:
                 "metrics": {"total_latency_ms": round((time.time() - overall_start) * 1000, 2)},
             }
         finally:
+            self._on_step = prev_hook
             _run_ctx.reset(token)
-
-    async def resume_after_approval(self, state: Dict[str, Any], approved: bool) -> Dict[str, Any]:
-        """Resume a paused workflow from the approval gate.
-
-        - approved=True -> mark approved and re-enter the graph; completed steps
-          pass through as no-ops and only report generation executes.
-        - approved=False -> terminal state `denied`.
-        """
-        state = dict(state)
-        overall_start = time.time()
-
-        if not approved:
-            logger.info("Approval denied", run_id=state.get("run_id"))
-            return {
-                **state,
-                "approved": False,
-                "terminal_status": "denied",
-                "current_step": "denied",
-                "summary_data": {
-                    "workflow_status": "denied",
-                    "message": "Configuration action was denied by the user.",
-                },
-                "metrics": self._summarize_metrics(state, overall_start),
-            }
-
-        logger.info("Approval granted, resuming", run_id=state.get("run_id"))
-        state.update({
-            "approved": True,
-            "terminal_status": None,
-            "current_step": "report",
-            "errors": list(state.get("errors", [])),
-        })
-        try:
-            result = await self.graph.ainvoke(state, {"recursion_limit": 50})
-            result.setdefault("run_id", state.get("run_id"))
-            result["approved"] = True
-            result["metrics"] = self._summarize_metrics(result, overall_start)
-            return result
-        except Exception as e:
-            logger.error("Approval resume failed", error=str(e), run_id=state.get("run_id"))
-            return {
-                **state,
-                "terminal_status": "error",
-                "current_step": "error",
-                "errors": list(state.get("errors", [])) + [f"Approval resume failed: {str(e)}"],
-                "metrics": self._summarize_metrics(state, overall_start),
-            }
 
     def _summarize_metrics(self, state: Dict[str, Any], overall_start: float) -> Dict[str, Any]:
         trace = state.get("trace", [])
         total_tokens = sum(t.get("tokens", 0) for t in trace)
         total_cost = sum(t.get("cost_usd", 0.0) for t in trace)
-        from app.tools.calling.registry import tool_registry
         tool_calls = sum(1 for t in trace if str(t.get("step", "")).startswith("tool:"))
         return {
             "run_id": state.get("run_id"),
@@ -402,4 +288,4 @@ class NetworkWorkflow:
         }
 
 
-network_workflow = NetworkWorkflow()
+travel_workflow = TravelWorkflow()

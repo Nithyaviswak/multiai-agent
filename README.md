@@ -1,48 +1,43 @@
-﻿# Multi AI Agent
+﻿# Multi AI Travelling Agent
 
-A provider-agnostic multi-agent orchestration platform built on
-FastAPI + LangGraph + LangChain with a React (Claude-style) frontend. Ship with
-your own OpenAI, Anthropic, or Groq API keys and switch models on the fly.
-Includes a network-operations agentic workflow that runs against simulated
-Cisco environments (no hardware required).
+A provider-agnostic multi-agent travel-planning platform built on
+FastAPI + LangGraph + LangChain with a React (Claude-style) frontend.
 
-> **Metrics honesty note:** Read [`backend/docs/METRICS.md`](backend/docs/METRICS.md).
-> The previously advertised figures (95% task completion, 60% context reduction)
-> were not backed by measurements and are **not claimed here**. Real, measured
-> metrics from live Groq runs are documented in that file.
+Specialized agents fetch real Google Maps routes (car, bus, train, bike),
+find restaurants by meal (tiffin / lunch / dinner), discover nearby places
+that fit your time budget, and build a timed itinerary — using your own
+LLM keys and a Google Maps API key.
 
 ## Features
 
-- **Bring your own key** — add Groq / OpenAI / Anthropic keys, or register any
-  **custom model by name + API key** (OpenRouter free models, Together, Mistral,
-  local Ollama, or any OpenAI-compatible endpoint) from the UI settings sheet.
-- **Free open-source models** — Groq-powered GPT-OSS, Qwen, ALLAM and Compound
-  models work out of the box (verified live), flagged FREE in the model picker.
-- **Model switching** — pick any model from the composer at the bottom of the
-  UI; hot-swaps the LLM for every agent in the workflow.
-- **12 specialized agents** in a LangGraph pipeline:
-  Planner, Topology Discovery, Knowledge, NETCONF Collection, Configuration,
-  Automation, Verification, Monitoring, Compliance Checker, Log Analyzer,
-  Incident Response, Report Generator.
-- **Human-in-the-loop approval** — mutating actions pause for approval before any
-  config is applied.
+- **Bring your own key** — Groq / OpenAI / Anthropic keys, or register any
+  **custom model by name + API key** (OpenRouter, Together, Ollama, etc.).
+- **Google Maps integration** — real Directions + Places data; no simulated routes.
+- **Dynamic origin/destination** — extracted from the request (no fixed city).
+- **Per-mode route agents** — Car, Bus, Train, Bike compared deterministically.
+- **Restaurants by meal** — tiffin (06–11), lunch (11–16), dinner (16–23),
+  ranked by rating and distance from the route midpoint.
+- **Places within budget** — feasibility pre-filtered so the itinerary never
+  overflows the time budget.
+- **Timed itinerary** — chronological stops with meal slots, place dwell times
+  and detour estimates.
+- **Model switching** — hot-swap the LLM from the UI composer.
 - **Failure-aware workflow** — bounded retries, failure routers, truthful
-  terminal states (`complete` / `error` / `awaiting_approval` / `denied`).
+  terminal states (`complete` / `error`).
 - **Observability & cost tracking** — per-step trace with latency, tokens and
   estimated cost per run; queryable via API.
-- **Guardrails** — deterministic input blocking, config allow-list, secret
-  redaction (see [`backend/docs/SECURITY.md`](backend/docs/SECURITY.md)).
-- **RBAC + audit logging** — permission checks and a full audit trail.
+- **Guardrails** — deterministic input blocking, prompt-injection detection,
+  secret redaction.
 - **Rate limiting** — async token-bucket, per user.
-- **Evaluation harness** — labeled dataset + deterministic scoring + optional
-  live end-to-end runs (`backend/evaluate.py`).
-- **Mock network tools**: NAPALM, Netmiko, Nornir, pyATS (simulated).
+- **Evaluation harness** — labeled dataset + deterministic extraction scoring
+  + optional live end-to-end runs (`backend/evaluate.py`).
 
 ## Tech Stack
 
-- **Backend:** FastAPI, LangGraph, LangChain, Groq, Pydantic v2
+- **Backend:** FastAPI, LangGraph, LangChain, Groq, httpx, Pydantic v2
 - **Frontend:** React, Vite, Tailwind, Framer Motion, Axios
-- **Quality:** pytest suite, GitHub Actions CI, evaluation harness
+- **Maps:** Google Maps Directions + Places APIs
+- **Quality:** pytest (46 tests), evaluation harness
 
 ## Project Structure
 
@@ -50,31 +45,32 @@ Cisco environments (no hardware required).
 multiai-agent/
   backend/
     app/
-      agents/           # 12 LangGraph agents
-      graph/            # LangGraph StateGraph workflow (retries, approvals, metrics)
-      schemas/          # Pydantic models
+      agents/           # TravelPlanner, 4 route agents, comparator, restaurants,
+                        # places, itinerary, knowledge, report
+      graph/            # LangGraph sequential workflow (retries, metrics)
+      schemas/          # Pydantic models (AgentState, TravelRequest)
       tools/
-        network/        # Mock NAPALM, Netmiko, Nornir, pyATS
+        geo/            # Google Maps async client (directions, places, geocode)
+        travel/         # meal_matcher, itinerary_builder (deterministic)
         guardrails/     # Input/output safety controls
         evaluation/     # Metric tracking
         rate_limiter.py # Async per-user rate limiter
         audit/          # Audit logging
-        rbac/           # Permission checks
-      data/             # Evaluation datasets
+      data/             # Evaluation datasets (eval_travel_dataset.json)
       config.py         # Settings + startup validation
       main.py           # FastAPI app + endpoints
-    tests/              # pytest suite
+    tests/              # 46 pytest tests (deterministic, no API keys needed)
     evaluate.py         # Evaluation harness
-    docs/               # METRICS.md, SECURITY.md
     requirements.txt
   frontend/
     src/
-      components/       # NetworkInput, AgentProgress, NetworkResults, EnterprisePanel
-      hooks/
-      services/         # NetworkAPI client
-      pages/
+      components/       # Composer, AgentProgress, TravelResults, Settings
+      hooks/            # useTravelPlanner
+      services/         # TravelAPI client
+      pages/            # Dashboard
     package.json
-  .github/workflows/    # CI
+  render.yaml           # Render deployment
+  docker-compose.yml    # Docker Compose (backend + frontend)
   README.md
 ```
 
@@ -82,6 +78,8 @@ multiai-agent/
 
 - Python 3.10+ (3.12 tested)
 - Node.js 18+
+- A [Google Maps API key](https://console.cloud.google.com/apis/credentials)
+  with **Directions API** and **Places API** enabled.
 
 ## Environment Setup
 
@@ -90,11 +88,10 @@ cd backend
 Copy-Item .env.example .env
 ```
 
-Set `GROQ_API_KEY` in `backend/.env` as a default. OpenAI and Anthropic keys can
-be added later from the UI (or via `OPENAI_API_KEY` / `ANTHROPIC_API_KEY`).
-The default `LLM_MODEL` is a model verified to exist on Groq
-(`openai/gpt-oss-20b`); the app fails fast at startup if the configured model
-is not on the known-good list.
+Set `GROQ_API_KEY` and `GOOGLE_MAPS_API_KEY` in `backend/.env`. OpenAI,
+Anthropic and Tavily keys can be added later from the UI or via env vars.
+The default `LLM_MODEL` is `openai/gpt-oss-20b` (verified on Groq); the app
+fails fast at startup if the model or a required key is missing.
 
 ## Run Backend
 
@@ -122,99 +119,82 @@ Frontend URL: `http://localhost:3000`
 
 ```powershell
 cd backend
-.\venv\Scripts\python.exe -X utf8 -m pytest tests -q        # deterministic test suite
-.\venv\Scripts\python.exe -X utf8 evaluate.py               # deterministic eval (no API)
-.\venv\Scripts\python.exe -X utf8 evaluate.py --live        # full workflows (real API)
+.\venv\Scripts\python.exe -m pytest tests -q          # 46 deterministic tests
+.\venv\Scripts\python.exe evaluate.py                  # deterministic eval (no API)
+.\venv\Scripts\python.exe evaluate.py --live           # full workflows (needs keys)
 ```
 
 ## API Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/` | System info, available environments & devices |
-| `POST` | `/api/network` | Start network automation workflow (rate-limited per user) |
-| `GET` | `/api/network/{id}` | Get workflow status/result |
-| `POST` | `/api/approve` | Approve/deny a paused mutation |
+| `GET` | `/` | System info (agents, modes, meals, tools, Maps status) |
+| `POST` | `/api/travel` | Start travel workflow (rate-limited per user) |
+| `GET` | `/api/travel/{id}` | Get workflow result |
+| `GET` | `/api/maps/status` | Whether a Google Maps API key is configured |
 | `POST` | `/api/memory/history` | Conversation history (per session) |
 | `POST` | `/api/memory/context` | Recent project context |
-| `POST` | `/api/memory/undo` | Undo last config change |
 | `GET` | `/api/evaluation/stats` | Per-agent + aggregate metrics |
-| `GET` | `/api/models` | List supported models (incl. which providers have keys) |
+| `GET` | `/api/models` | List supported models |
 | `GET` | `/api/models/current` | Currently active model |
-| `POST` | `/api/models` | Switch the active model (`{"model": "openai/gpt-4o"}`) |
-| `POST` | `/api/models/custom` | Register a custom model by name + API key + base URL |
-| `DELETE` | `/api/models/custom` | Remove a custom model (`?model_id=...`) |
-| `POST` | `/api/models/keys` | Set/update the API key for a specific model |
+| `POST` | `/api/models` | Switch the active model |
+| `POST` | `/api/models/custom` | Register a custom model |
+| `DELETE` | `/api/models/custom` | Remove a custom model |
+| `POST` | `/api/models/keys` | Set/update an API key for a model |
 | `GET` | `/api/models/base-urls` | Preset OpenAI-compatible base URLs |
 | `GET` | `/api/providers` | Provider/key status |
-| `POST` | `/api/providers/keys` | Save an API key (`{"provider": "openai", "key": "..."}`) |
+| `POST` | `/api/providers/keys` | Save a provider API key |
 | `GET` | `/api/runs/{run_id}` | Per-run trace + metrics |
 | `GET` | `/api/audit/logs` | Audit log entries |
-| `GET` | `/api/tools/call` | Invoke a registered tool |
+| `POST` | `/api/tools/call` | Invoke a registered tool |
 | `GET` | `/api/tools/list` | List registered tools |
-| `GET` | `/api/devices` | List all simulated devices |
-| `GET` | `/api/topology` | Get network topology |
-| `GET` | `/api/environments` | List available environments |
 | `WS` | `/ws/{client_id}` | Real-time streaming |
 
-### Example: Start Network Automation
+### Example: Start Travel Workflow
 
 ```json
 {
-  "intent": "Configure OSPF on core-router-01",
-  "environment": "devnet-sandbox",
-  "user_id": "engineer"
+  "intent": "Plan a trip from Bengaluru to Mysuru by train with lunch and places to cover within 6 hours",
+  "origin": "Bengaluru",
+  "destination": "Mysuru",
+  "travel_modes": ["train"],
+  "meal_types": ["lunch"],
+  "time_budget_minutes": 360
 }
 ```
 
-## Example Intents
-
-- `"Configure OSPF on core-router-01 and distribution-sw-01"`
-- `"Verify BGP peering on edge-router-01"`
-- `"Audit security compliance across all devices"`
-- `"Troubleshoot connectivity issues between core and edge"`
-- `"Generate VLAN configuration for distribution-sw-01"`
-- `"Check logs on all devices for errors"`
+All fields except `intent` are optional — the planner agent extracts them
+from the natural-language request.
 
 ## Workflow Pipeline
 
 ```
-User Intent → Planner → Topology → Knowledge → NETCONF → Configuration →
-Automation → Verification → Monitoring → Compliance → Log Analyzer →
-Incident Response → [Approval Gate for mutations] → Report
+User Intent
+  → Travel Planner (extract origin, destination, modes, meals, budget)
+  → Car / Bus / Train / Bike routes (Google Maps Directions API, sequential)
+  → Route Comparator (best mode by budget + speed)
+  → Gather Knowledge / Find Restaurants / Find Places (sequential)
+  → Build Itinerary (deterministic greedy scheduler)
+  → Generate Report (structured summary)
+  → Complete
 ```
-
-## Mock Devices
-
-| Hostname | Role | Vendor | Platform | Environment |
-|----------|------|--------|----------|-------------|
-| core-router-01 | Core | Cisco | IOS-XE 17.9.1 | DevNet Sandbox |
-| edge-router-01 | Edge | Cisco | IOS-XE 17.6.3 | ContainerLab |
-| distribution-sw-01 | Distribution | Cisco | IOS-XE 17.3.6 | GNS3 |
-| access-sw-01 | Access | Cisco | IOS-XE 17.3.6 | EVE-NG |
 
 ## Security
 
-See [`backend/docs/SECURITY.md`](backend/docs/SECURITY.md). Key points:
-
 - Never commit real API keys; `backend/.env` is git-ignored.
-- Keys added from the UI live in in-memory keyring only; providers without a
-  key are blocked (or simply not offered) in the model picker.
-- Mutating intents require human approval.
-- Guardrails block destructive/credential-exfil inputs deterministically.
-
-## Metrics & Evaluation
-
-See [`backend/docs/METRICS.md`](backend/docs/METRICS.md) for how metrics are
-collected and the honest, measured results.
+- Keys live in in-memory keyring only; providers without a key are not
+  offered in the model picker.
+- Guardrails block destructive / prompt-injection inputs deterministically.
+- Output sanitizer redacts `api_key`, `password`, `secret`, `token` patterns.
 
 ## Deploy on Render
 
 `render.yaml` deploys the backend from the `backend` directory. Required env
 vars on Render:
 
-- `GROQ_API_KEY` (default provider; others can be added via UI)
-- `TAVILY_API_KEY` (optional)
+- `GROQ_API_KEY` (default LLM provider)
+- `GOOGLE_MAPS_API_KEY` (required for real route/place data)
+- `TAVILY_API_KEY` (optional — adds web travel tips when configured)
 - `LLM_MODEL` (optional, default `openai/gpt-oss-20b`)
 
 ## Deploy Frontend on Netlify

@@ -1,34 +1,81 @@
-﻿import asyncio, json, sys
-sys.path.insert(0, '.')
-from app.graph.workflow import NetworkWorkflow
-from langgraph.graph import StateGraph, END
+﻿"""Smoke test for the compiled TravelWorkflow graph.
 
-async def test():
-    wf = NetworkWorkflow()
-    # Add recursion limit
-    initial = {
-        "intent": "Configure OSPF on core-router-01",
-        "intent_complete": False, "intent_data": None,
-        "knowledge_data": None,
-        "topology_complete": False, "topology_data": None,
-        "netconf_complete": False, "netconf_data": None,
-        "config_complete": False, "config_data": None,
-        "automation_data": None,
-        "verification_complete": False, "verification_data": None,
-        "monitoring_data": None,
-        "compliance_complete": False, "compliance_data": None,
-        "log_analysis_complete": False, "log_analysis_data": None,
-        "incident_response_data": None,
-        "summary_data": None, "summary_complete": False,
-        "session_id": "test", "user_id": "engineer",
-        "requires_approval": False, "approved": False,
-        "approval_id": None, "errors": [],
-        "current_step": "plan", "retry_count": 0, "should_retry": False,
+No live API calls in CI: the maps client is monkeypatched, so the graph runs
+end-to-end with deterministic data. Requires a GOOGLE_MAPS_API_KEY only for the
+optional `--live` mode (see conftest).
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from app.graph.workflow import TravelWorkflow
+from app.tools.geo import maps_client
+
+
+def _fake_route(mode):
+    return {
+        "mode": mode,
+        "status": "OK",
+        "from": "Bengaluru",
+        "to": "Mysuru",
+        "distance_m": 120000,
+        "distance_km": 120.0,
+        "duration_sec": 6000,
+        "duration_min": 100,
+        "summary": f"{mode} route",
+        "via_points": [[12.9, 77.6], [12.6, 77.4], [12.3, 77.2]],
     }
-    try:
-        result = await wf.graph.ainvoke(initial, {"recursion_limit": 100})
-        print("SUCCESS:", json.dumps({"current_step": result.get("current_step"), "has_intent": result.get("intent_data") is not None}, indent=2))
-    except Exception as e:
-        print(f"ERROR: {e}")
 
-asyncio.run(test())
+
+def _fake_place(name, place_id):
+    return {
+        "place_id": place_id,
+        "name": name,
+        "vicinity": "Near route",
+        "rating": 4.5,
+        "user_ratings_total": 100,
+        "types": ["tourist_attraction"],
+        "lat": 12.6,
+        "lng": 77.4,
+    }
+
+
+def install_fakes():
+    async def fake_directions(origin, destination, mode, depart_at=None):
+        return _fake_route(mode)
+
+    async def fake_place_search(**kwargs):
+        return [_fake_place("Fort View", "p-fort"), _fake_place("Lake Park", "p-lake")]
+
+    async def fake_search_tool(query, max_results=2):
+        return {"results": [{"title": "Travel guide", "link": "https://example.com", "snippet": "tips"}]}
+
+    maps_client.directions = fake_directions
+    maps_client.place_search = fake_place_search
+    maps_client.anchor_point = lambda route: {"lat": 12.6, "lng": 77.4}
+    # Avoid live Tavily call in the knowledge agent.
+    import app.tools.calling.search_tool as st
+    st.search_tool.execute = fake_search_tool
+
+
+async def main():
+    install_fakes()
+    wf = TravelWorkflow()
+    result = await wf.run(
+        "Plan a trip from Bengaluru to Mysuru by car with lunch and cover some places within 6 hours",
+        origin="Bengaluru", destination="Mysuru",
+        travel_modes=["car"], meal_types=["lunch"], time_budget_minutes=360,
+    )
+    print("current_step:", result.get("current_step"))
+    print("terminal_status:", result.get("terminal_status"))
+    assert result.get("current_step") == "complete", result.get("errors")
+    assert result.get("summary_complete") is True
+    assert result.get("itinerary_data", {}).get("stops")
+    print("path_completed:", [t["step"] for t in result.get("trace", [])])
+    print("SMOKE_OK")
+
+
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
