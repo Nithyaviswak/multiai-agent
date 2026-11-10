@@ -38,6 +38,12 @@ backend/backend_stdout.txt
 backend/backend_stderr.txt
 *.txt
 
+# Deployment secrets
+deploy/aws/*.pem
+deploy/aws/*.key
+*.pem
+docker-compose.override.yml
+
 # IDE/OS
 .vscode/
 .idea/

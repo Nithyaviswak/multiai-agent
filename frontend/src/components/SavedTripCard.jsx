@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion';
+import { useEffect, useState } from 'react';
 import { ArrowRight, Bookmark, Trash2, Clock, Route as RouteIcon, UtensilsCrossed } from 'lucide-react';
 import { fmtDate, fmtMin } from '../lib/format';
 
@@ -6,6 +7,19 @@ const SavedTripCard = ({ trip, index, onOpen, onRemove }) => {
   const plan = trip.data?.plan_data || {};
   const route = trip.data?.route_data || {};
   const restaurants = trip.data?.restaurants_data || {};
+  const [arming, setArming] = useState(false);
+
+  // Auto-disarm the "confirm" state if the user walks away
+  useEffect(() => {
+    if (!arming) return undefined;
+    const t = setTimeout(() => setArming(false), 4500);
+    return () => clearTimeout(t);
+  }, [arming]);
+
+  const confirmRemove = () => {
+    setArming(false);
+    onRemove();
+  };
 
   return (
     <motion.div
@@ -40,13 +54,33 @@ const SavedTripCard = ({ trip, index, onOpen, onRemove }) => {
           </p>
         </button>
 
-        <button
-          onClick={onRemove}
-          className="w-8 h-8 rounded-full flex items-center justify-center text-ink-mute hover:text-danger hover:bg-danger/10 transition-colors flex-shrink-0"
-          aria-label="Remove saved trip"
-        >
-          <Trash2 className="w-4 h-4" />
-        </button>
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {arming && (
+            <motion.button
+              initial={{ opacity: 0, x: 6 }}
+              animate={{ opacity: 1, x: 0 }}
+              transition={{ duration: 0.15 }}
+              onClick={() => setArming(false)}
+              className="h-8 px-2.5 rounded-full text-[11.5px] font-semibold text-ink-soft hover:text-ink hover:bg-paper-inset transition-colors"
+              aria-label="Keep this trip"
+            >
+              Keep
+            </motion.button>
+          )}
+          <button
+            onClick={() => (arming ? confirmRemove() : setArming(true))}
+            onBlur={() => setArming(false)}
+            className={`h-8 px-2.5 rounded-full flex items-center justify-center gap-1 text-[11.5px] font-semibold transition-all flex-shrink-0 ${
+              arming
+                ? 'bg-danger/10 text-danger shadow-sm'
+                : 'text-ink-mute hover:text-danger hover:bg-danger/10'
+            }`}
+            aria-label={arming ? 'Confirm remove saved trip' : 'Remove saved trip'}
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+            {arming && 'Remove?'}
+          </button>
+        </div>
       </div>
 
       <button

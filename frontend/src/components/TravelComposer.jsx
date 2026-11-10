@@ -24,7 +24,7 @@ const Chip = ({ selected, onClick, children, className = '' }) => (
     type="button"
     onClick={onClick}
     aria-pressed={selected}
-    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12.5px] font-medium transition-colors border ${
+    className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[12.5px] font-medium transition-all border active:scale-[0.96] ${
       selected
         ? 'bg-primary-soft border-primary/40 text-primary'
         : 'bg-paper-elevated border-paper-line text-ink-soft hover:border-ink-faint hover:text-ink'

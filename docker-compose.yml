@@ -1,27 +1,72 @@
+# Production stack for a single host (AWS EC2 or any Docker host).
+#
+#   cd multiai-agent
+#   cp backend/.env.example backend/.env   # then set GROQ_API_KEY
+#   docker compose up -d --build
+#
+# The frontend container serves the built SPA and reverse-proxies /api and /ws
+# to the backend. The backend is intentionally NOT published on a host port.
+name: multiai-agent
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
+    image: multiai-agent-backend:latest
     env_file:
       - ./backend/.env
     environment:
-      - API_HOST=0.0.0.0
-      - API_PORT=8000
-    volumes:
-      - ./backend:/app
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    expose:
+      - "8000"
     restart: unless-stopped
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - app
 
   frontend:
-    image: node:20-alpine
-    working_dir: /app
-    volumes:
-      - ./frontend:/app
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: multiai-agent-frontend:latest
     ports:
-      - "3000:3000"
-    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+      - "${FRONTEND_PORT:-80}:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    networks:
+      - app
+
+networks:
+  app:
+    driver: bridge

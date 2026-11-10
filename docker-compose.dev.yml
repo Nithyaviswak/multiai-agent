@@ -1,0 +1,64 @@
+# Local development stack with hot reload.
+#
+#   cd multiai-agent
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Backend:  http://localhost:8000
+# Frontend: http://localhost:3000
+name: multiai-agent-dev
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: multiai-agent-backend:dev
+    env_file:
+      - ./backend/.env
+    environment:
+      API_HOST: 0.0.0.0
+      API_PORT: "8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Live source mount; dependencies stay in the image's site-packages.
+      - ./backend:/app
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --reload
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+      # Keep Linux node_modules inside the container (avoids host/OS clashes).
+      - frontend_node_modules:/app/node_modules
+    ports:
+      - "3000:3000"
+    environment:
+      # Reliable file watching when the source lives on a Windows/macOS host.
+      CHOKIDAR_USEPOLLING: "true"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  frontend_node_modules:

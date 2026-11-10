@@ -32,7 +32,7 @@ class Guardrails:
     # Credentials/secret keys to redact from LLM output.
     SECRET_KEYS = r"(api[_ ]?key|password|secret|token|access[-_ ]?key|private[-_ ]?key)"
     KNOWN_ENV_VARS = (r"aws_access_key_id|aws_secret_access_key|GITHUB_TOKEN|"
-                      r"GROQ_API_KEY|TAVILY_API_KEY|GOOGLE_MAPS_API_KEY")
+                      r"GROQ_API_KEY|TAVILY_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY")
 
     @staticmethod
     def validate_input(user_input: str) -> Dict[str, Any]:

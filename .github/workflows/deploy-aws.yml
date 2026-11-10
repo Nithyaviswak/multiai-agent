@@ -1,0 +1,34 @@
+name: Deploy to AWS EC2
+
+# Manual, production-only deploy. The instance is prepared once with
+# deploy/aws/setup-ec2.sh; this workflow then pulls and restarts the stack.
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Branch to deploy on the EC2 host
+        required: true
+        default: main
+
+concurrency:
+  group: deploy-aws-ec2
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy over SSH
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy on the EC2 host
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 30m
+          script_stop: true
+          script: |
+            set -euo pipefail
+            cd "${{ secrets.EC2_APP_DIR || '/opt/multiai-agent' }}"
+            BRANCH="${{ inputs.branch }}" bash deploy/aws/deploy.sh

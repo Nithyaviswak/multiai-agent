@@ -48,7 +48,7 @@ const ActivityContent = ({ stop }) => {
   );
 };
 
-const ActivityCard = ({ stop, index, total, onMove, onRemove, onRestore, removed, onChange }) => {
+const ActivityCard = ({ stop, index, total, onMove, onRemove, onRestore, removed, onChange, isActive }) => {
   const meta = KIND_META[stop.kind] || KIND_META.place;
   const Icon = meta.icon;
   const [expanded, setExpanded] = useState(false);
@@ -59,10 +59,10 @@ const ActivityCard = ({ stop, index, total, onMove, onRemove, onRestore, removed
     <div className="relative flex gap-3 group">
       {/* icon + rail */}
       <div className="flex flex-col items-center flex-shrink-0">
-        <div className="relative z-10 w-9 h-9 rounded-full flex items-center justify-center bg-paper-elevated border shadow-sm" style={{ borderColor: meta.color, color: meta.color }}>
+        <div className={`relative z-10 w-9 h-9 rounded-full flex items-center justify-center bg-paper-elevated border shadow-sm ${isActive ? "pulse-dot" : ""}`} style={{ borderColor: meta.color, color: meta.color }}>
           <Icon className="w-4 h-4" />
         </div>
-        {index < total - 1 && <div className="w-px flex-1 min-h-6 bg-paper-line" />}
+        {index < total - 1 && <div className="w-px flex-1 min-h-6 bg-gradient-to-b from-primary/30 via-secondary/20 to-transparent" />}
       </div>
 
       <div className="flex-1 pb-4 min-w-0">
@@ -70,7 +70,7 @@ const ActivityCard = ({ stop, index, total, onMove, onRemove, onRestore, removed
           layout
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25 }}
+          transition={{ duration: 0.3, delay: index * 0.06, ease: "easeOut" }}
           className="rounded-2xl border border-paper-line bg-paper-elevated p-3.5 transition-colors group-hover:border-ink-faint"
         >
           <div className="flex items-start gap-3">
@@ -231,6 +231,7 @@ const ItineraryTimeline = ({ stops, onStopsChange }) => {
               stop={s}
               index={vi}
               total={visible.length}
+              isActive={vi === visible.length - 1}
               onMove={move}
               onRemove={() => remove(origIndex)}
               onRestore={() => restore(origIndex)}

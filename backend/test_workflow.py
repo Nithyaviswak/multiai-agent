@@ -1,8 +1,8 @@
 ﻿"""Smoke test for the compiled TravelWorkflow graph.
 
 No live API calls in CI: the maps client is monkeypatched, so the graph runs
-end-to-end with deterministic data. Requires a GOOGLE_MAPS_API_KEY only for the
-optional `--live` mode (see conftest).
+end-to-end with deterministic data. Optional `--live` mode hits the real
+free-OSM stack (see conftest).
 """
 import sys
 from pathlib import Path

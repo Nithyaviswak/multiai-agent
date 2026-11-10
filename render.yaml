@@ -10,8 +10,6 @@ services:
         value: 3.12.8
       - key: GROQ_API_KEY
         sync: false
-      - key: GOOGLE_MAPS_API_KEY
-        sync: false
       - key: TAVILY_API_KEY
         sync: false
       - key: LLM_MODEL

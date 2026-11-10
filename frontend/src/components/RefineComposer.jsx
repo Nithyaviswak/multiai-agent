@@ -44,7 +44,7 @@ const RefineComposer = ({ onRefine, onRegenerate, isLoading, iteration = 0 }) =>
           <button
             key={s}
             onClick={() => { if (!isLoading) { setActiveChip(s); submit(s); } }}
-            className={`px-3 py-1.5 rounded-full text-[11.5px] font-medium border transition-colors ${
+            className={`px-3 py-1.5 rounded-full text-[11.5px] font-medium border transition-all active:scale-[0.96] ${
               activeChip === s
                 ? 'bg-primary-soft border-primary/40 text-primary'
                 : 'bg-paper-elevated border-paper-line text-ink-soft hover:border-ink-faint hover:text-ink'

@@ -4,7 +4,7 @@ from typing import Any, Dict
 
 from app.agents.base import BaseAgent
 from app.logging_config import logger
-from app.tools.geo.maps_client import GoogleMapsClientError, maps_client
+from app.tools.geo.maps_client import MapsClientError, maps_client
 
 FIELD_BY_MODE = {
     "car": "route_car",
@@ -53,7 +53,7 @@ class ModeRouteAgent(BaseAgent):
         logger.info("Mode route agent started", mode=self.mode, origin=origin, destination=destination)
         try:
             route = await maps_client.directions(origin, destination, self.mode)
-        except GoogleMapsClientError as e:
+        except MapsClientError as e:
             return {
                 f"{field}_complete": False,
                 f"{field}_data": None,

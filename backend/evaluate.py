@@ -6,8 +6,8 @@ planner (origin/destination/mode/meal/budget extraction) and the guardrails
 
 The harness NEVER fabricates numbers: it measures the extraction accuracy of
 the planner deterministically, and (when --live is set) runs full workflows
-against the real Google Maps / LLM APIs and reports actual latency/tokens/cost
-from run metrics.
+against the real free OpenStreetMap stack / LLM APIs and reports actual
+latency/tokens/cost from run metrics.
 
 Usage:
     python evaluate.py                              # deterministic subset (no API keys)

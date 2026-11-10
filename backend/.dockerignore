@@ -1,0 +1,32 @@
+# Secrets — never bake .env into an image.
+.env
+.env.*
+!.env.example
+
+# Local virtualenvs and caches
+venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Tests and evaluation harness are not needed at runtime
+tests/
+evaluate.py
+test_workflow.py
+docs/
+
+# Local artifacts and logs
+*.log
+*.tmp
+*.pid
+backend_stdout.txt
+backend_stderr.txt
+osrm_raw.json
+.git/
+.github/

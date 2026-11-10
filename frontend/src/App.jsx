@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Toaster } from 'react-hot-toast';
 import toast from 'react-hot-toast';
@@ -16,6 +16,8 @@ import { useTravelPlanner } from './hooks/useResearch';
 import { useSavedTrips } from './hooks/useSavedTrips';
 import { useTheme } from './hooks/useTheme';
 import { travelAPI } from './services/api';
+
+const VIEW_IDS = ['explore', 'trips', 'profile'];
 
 const ErrorScreen = ({ message, onRetry, onBack }) => (
   <div className="max-w-lg mx-auto px-4 pt-16 pb-10">
@@ -42,10 +44,42 @@ function App() {
   const { trips, saveTrip, removeTrip, isSaved } = useSavedTrips();
   const { theme, toggle: toggleTheme } = useTheme();
 
-  const [view, setView] = useState('explore'); // explore | trips | profile
+  // Hash-based deep linking: #explore · #trips · #profile · #trips/{workflowId}
+  const [view, setView] = useState(() => {
+    const h = location.hash;
+    if (h.startsWith('#trips/')) return 'trips';
+    return VIEW_IDS.find(v => h === `#${v}`) || 'explore';
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [savedOpen, setSavedOpen] = useState(null); // snapshot rehydrated from My Trips
+  const [savedOpen, setSavedOpen] = useState(() => {
+    const h = location.hash;
+    if (!h.startsWith('#trips/')) return null;
+    const wf = decodeURIComponent(h.slice('#trips/'.length));
+    return trips.find(t => t.workflowId === wf)?.data || null;
+  });
   const [currentModel, setCurrentModel] = useState(null);
+
+  const tripsRef = useRef(trips);
+  useEffect(() => { tripsRef.current = trips; });
+
+  // Keep view + open saved trip in sync with the URL hash → browser back/forward works
+  useEffect(() => {
+    const onHashChange = () => {
+      const h = location.hash;
+      if (h.startsWith('#trips/')) {
+        const wf = decodeURIComponent(h.slice('#trips/'.length));
+        const t = tripsRef.current.find(x => x.workflowId === wf);
+        setView('trips');
+        setSavedOpen(t?.data || null);
+      } else {
+        setView(VIEW_IDS.find(v => h === `#${v}`) || 'explore');
+        setSavedOpen(null);
+      }
+      window.scrollTo({ top: 0 });
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   const loadCurrentModel = () => {
     travelAPI.getCurrentModel().then(r => {
@@ -55,8 +89,10 @@ function App() {
   useEffect(() => { loadCurrentModel(); }, []);
 
   const navigate = (next) => {
+    if (next === view && !savedOpen) return; // already there — don't stack history entries
     setView(next);
     setSavedOpen(null);
+    window.location.hash = `#${next}`; // pushes a real history entry → back/forward works
     window.scrollTo({ top: 0 });
   };
 
@@ -69,8 +105,17 @@ function App() {
   const toggleSave = () => {
     if (!activeWorkflowId) return;
     if (savedId) {
+      const t = trips.find(x => x.id === savedId);
       removeTrip(savedId);
-      toast.success('Removed from My Trips');
+      toast.success('Removed from My Trips', {
+        duration: 5000,
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            if (t) saveTrip({ workflowId: t.workflowId, origin: t.origin, destination: t.destination, data: t.data });
+          },
+        },
+      });
     } else {
       const snapshot = savedOpen || data;
       const plan = snapshot?.plan_data || {};
@@ -84,9 +129,24 @@ function App() {
     }
   };
 
+  // Trip deletion from the My Trips list: remove immediately but offer an undo toast
+  const handleRemoveTrip = (id) => {
+    const t = trips.find(x => x.id === id);
+    if (!t) return;
+    removeTrip(id);
+    toast.success('Removed from My Trips', {
+      duration: 5000,
+      action: {
+        label: 'Undo',
+        onClick: () => saveTrip({ workflowId: t.workflowId, origin: t.origin, destination: t.destination, data: t.data }),
+      },
+    });
+  };
+
   const openSaved = (t) => {
     setView('trips');
     setSavedOpen(t.data || null);
+    window.location.hash = `#trips/${encodeURIComponent(t.workflowId)}`;
     window.scrollTo({ top: 0 });
   };
 
@@ -104,7 +164,7 @@ function App() {
   const failedSteps = data?.errors || (error && !data ? ['generate_report'] : []);
 
   return (
-    <div className="min-h-screen bg-paper text-ink flex flex-col">
+    <div className="min-h-screen text-ink flex flex-col relative">
       <Toaster
         position="top-center"
         toastOptions={{
@@ -119,6 +179,8 @@ function App() {
         }}
       />
 
+      <a href="#main-content" className="skip-link">Skip to main content</a>
+
       <Header
         view={view}
         onNavigate={navigate}
@@ -128,7 +190,7 @@ function App() {
         currentModel={currentModel}
       />
 
-      <main className="flex-1 w-full max-w-6xl mx-auto px-0 sm:px-6 pb-24 md:pb-10">
+      <main id="main-content" className="flex-1 w-full max-w-6xl mx-auto px-0 sm:px-6 pb-24 md:pb-10" tabIndex={-1}>
         <AnimatePresence mode="wait">
           {phase === 'planning' && (
             <PlanningView
@@ -149,7 +211,7 @@ function App() {
             />
           )}
 
-          {view === 'explore' && phase !== 'planning' && phase !== 'error' && tripData && (
+          {(view === 'explore' || savedOpen) && phase !== 'planning' && phase !== 'error' && tripData && (
             <TripView
               key={savedOpen ? `saved-${savedOpen.workflow_id}` : `trip-${data.workflow_id}-${iterations}`}
               data={tripData}
@@ -172,11 +234,11 @@ function App() {
             />
           )}
 
-          {view === 'trips' && phase === 'idle' && (
-            <TripsPage key="trips" trips={trips} onOpen={openSaved} onRemove={removeTrip} onNavigate={navigate} />
+          {view === 'trips' && phase !== 'planning' && phase !== 'error' && !savedOpen && (
+            <TripsPage key="trips" trips={trips} onOpen={openSaved} onRemove={handleRemoveTrip} onNavigate={navigate} />
           )}
 
-          {view === 'profile' && phase === 'idle' && (
+          {view === 'profile' && phase !== 'planning' && phase !== 'error' && (
             <ProfilePage
               key="profile"
               currentModel={currentModel}
@@ -191,14 +253,14 @@ function App() {
 
       {savedOpen && (
         <button
-          onClick={() => { setSavedOpen(null); setView('trips'); }}
+          onClick={() => { window.location.hash = '#trips'; }} // hashchange handler restores the list
           className="fixed bottom-24 md:bottom-6 right-4 z-30 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full glass border border-paper-line text-[12.5px] font-medium text-ink-soft hover:text-ink transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" /> Back to trips
         </button>
       )}
 
-      <BottomNav view={view} onNavigate={navigate} onPlan={handlePlan} onSettings={() => setView('profile')} />
+      <BottomNav view={view} onNavigate={navigate} onPlan={handlePlan} onSettings={() => navigate('profile')} />
 
       <SettingsPanel open={settingsOpen} onClose={() => setSettingsOpen(false)} onChanged={loadCurrentModel} />
     </div>

@@ -21,7 +21,7 @@ export const useTheme = () => {
     root.classList.toggle('dark', theme === 'dark');
     try { localStorage.setItem(KEY, theme); } catch {}
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0B1322' : '#F6F5F2');
+    if (meta) meta.setAttribute('content', theme === 'dark' ? '#0F172A' : '#F8FAFC');
   }, [theme]);
 
   const toggle = useCallback(() => setTheme(t => (t === 'dark' ? 'light' : 'dark')), []);

@@ -18,4 +18,15 @@ export default defineConfig({
       },
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // The map library is only needed when a trip has coordinates —
+          // keeping it out of the main bundle makes first paint faster.
+          map: ['maplibre-gl'],
+        },
+      },
+    },
+  },
 })

@@ -53,7 +53,7 @@ const PlanningView = ({ request, currentStep, failedSteps, onStop }) => {
             transition={{ duration: 0.6, ease: [0.32, 0.72, 0, 1] }}
           />
         </div>
-        <div className="flex items-center justify-between mt-2 text-[11px] text-ink-faint">
+        <div className="flex items-center justify-between mt-2 text-[11px] text-ink-faint" role="status" aria-live="polite">
           <span className="inline-flex items-center gap-1"><MapPinned className="w-3 h-3" /> {Math.round(progress * 100)}% complete</span>
           <span>{AGENTS.length} specialists on the team</span>
         </div>

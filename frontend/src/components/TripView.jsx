@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Globe2, CalendarDays, MapPinned, Wallet, UtensilsCrossed, Landmark } from 'lucide-react';
 import TripHeader from './TripHeader';
 import TripSummary from './TripSummary';
 import TransportCompare from './TransportCompare';
 import ItineraryTimeline from './ItineraryTimeline';
-import MapPanel from './MapPanel';
+// MapPanel ships MapLibre GL (~1 MB) — load it only when a trip actually renders.
+const MapPanel = lazy(() => import('./MapPanel'));
 import BudgetCard from './BudgetCard';
 import RestaurantList from './RestaurantList';
 import TeamRecap from './TeamRecap';
@@ -18,6 +19,20 @@ const PanelTitle = ({ icon: Icon, children, action }) => (
       <Icon className="w-3.5 h-3.5 text-secondary" /> {children}
     </p>
     {action}
+  </div>
+);
+
+// Shown while the MapLibre chunk loads — same footprint as the real map.
+const MapSkeleton = () => (
+  <div
+    className="relative w-full h-72 sm:h-80 rounded-2xl overflow-hidden border border-paper-line bg-paper-elevated flex items-center justify-center"
+    role="status"
+    aria-label="Loading route map"
+  >
+    <div className="flex flex-col items-center gap-2 text-ink-mute">
+      <MapPinned className="w-6 h-6 text-secondary/70 animate-pulse" />
+      <p className="text-[12px] font-medium">Loading route map…</p>
+    </div>
   </div>
 );
 
@@ -123,12 +138,14 @@ const TripView = ({
         <div className="order-3 space-y-4">
           <div className="rounded-2xl border border-paper-line bg-paper-elevated p-4">
             <PanelTitle icon={MapPinned}>Route map</PanelTitle>
-            <MapPanel
-              route={data.route_data}
-              places={data.places_data}
-              restaurants={data.restaurants_data}
-              itinerary={data.itinerary_data}
-            />
+            <Suspense fallback={<MapSkeleton />}>
+              <MapPanel
+                route={data.route_data}
+                places={data.places_data}
+                restaurants={data.restaurants_data}
+                itinerary={data.itinerary_data}
+              />
+            </Suspense>
           </div>
 
           <div className="rounded-2xl border border-paper-line bg-paper-elevated p-4">

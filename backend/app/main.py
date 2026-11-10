@@ -22,7 +22,7 @@ from app.tools.geo.maps_client import maps_client
 
 app = FastAPI(
     title="Multi-Agent AI Travelling Agent",
-    description="Multi-agent travel planner: per-mode route agents (car, bus, train, bike), restaurant lookup by meal (tiffin, lunch, dinner), place discovery within a time budget, and a timed itinerary builder. Real Google Maps Directions + Places data.",
+    description="Multi-agent travel planner: per-mode route agents (car, bus, train, bike), restaurant lookup by meal (tiffin, lunch, dinner), place discovery within a time budget, and a timed itinerary builder. Free OpenStreetMap data — OSRM routing, Nominatim geocoding, Overpass places — displayed with OpenFreeMap vector tiles.",
     version="1.0.0"
 )
 
@@ -109,8 +109,9 @@ async def root():
         "meal_types": ["tiffin", "lunch", "dinner"],
         "tools": [t["name"] for t in tool_registry.list_tools()],
         "features": ["tool_calling", "memory", "audit_logging",
-                      "evaluation", "guardrails", "websockets", "google_maps"],
+                      "evaluation", "guardrails", "websockets", "openstreetmap"],
         "maps_configured": maps_client.has_credentials(),
+        "maps_provider": maps_client.provider(),
     }
 
 # ── Workflow Endpoints ───────────────────────────────────────────
@@ -351,7 +352,8 @@ async def list_tools():
 # ── Maps status endpoint ─────────────────────────────────────────
 @app.get("/api/maps/status")
 async def maps_status():
-    return {"success": True, "configured": maps_client.has_credentials()}
+    return {"success": True, "configured": maps_client.has_credentials(),
+            "provider": maps_client.provider()}
 
 # ── WebSocket for real-time streaming ────────────────────────────
 @app.websocket("/ws/{client_id}")
@@ -446,7 +448,10 @@ async def startup():
         logger.warning("Startup warning", problem=warning)
     _apply_active_model()
     logger.info("Active model", model=active_model)
-    logger.info("Google Maps client configured", configured=maps_client.has_credentials())
+    logger.info("Free maps stack available",
+                provider=maps_client.provider().get("name"),
+                routing=maps_client.osrm_url,
+                geocoding=maps_client.nominatim_url)
 
 @app.on_event("shutdown")
 async def shutdown():

@@ -21,6 +21,19 @@ class PlacesAgent(BaseAgent):
     PLACE_QUERIES = ["tourist attractions", "monuments", "parks and gardens",
                      "museums", "historic sights", "viewpoints"]
 
+    # Combined OpenStreetMap tag filters for a single Overpass query.
+    PLACE_OSM_TAGS = [
+        ("tourism", "attraction"),
+        ("tourism", "museum"),
+        ("tourism", "viewpoint"),
+        ("historic", "monument"),
+        ("historic", "memorial"),
+        ("historic", "yes"),
+        ("leisure", "park"),
+        ("leisure", "garden"),
+        ("natural", "beach"),
+    ]
+
     async def process(self, state: Dict[str, Any]) -> Dict[str, Any]:
         logger.info("Places agent started")
         route_data = state.get("route_data") or {}
@@ -41,25 +54,27 @@ class PlacesAgent(BaseAgent):
         margin = budget - route_min - meal_min
 
         pool: Dict[str, Dict[str, Any]] = {}
-        for query in self.PLACE_QUERIES:
-            results = await maps_client.place_search(
-                query=query, location=anchor,
-                radius=settings.PLACES_RADIUS_METERS, max_results=maps_client.MAX_RESULTS,
-            )
-            for res in results:
-                if res.get("error") or not res.get("place_id"):
-                    continue
-                if res["place_id"] in pool:
-                    continue
-                if res.get("lat") is not None:
-                    res["distance_km"] = haversine_km(anchor["lat"], anchor["lng"],
-                                                      res["lat"], res["lng"])
-                else:
-                    res["distance_km"] = None
-                res["visit_minutes"] = estimate_visit_minutes(res.get("name", ""), res.get("types"))
-                res["detour_minutes"] = estimate_detour_minutes(res.get("distance_km"))
-                res["cost_minutes"] = res["visit_minutes"] + res["detour_minutes"]
-                pool[res["place_id"]] = res
+        results = await maps_client.place_search(
+            query=", ".join(self.PLACE_QUERIES),
+            location=anchor,
+            radius=settings.PLACES_RADIUS_METERS,
+            max_results=maps_client.MAX_RESULTS * 2,
+            osm_tags=self.PLACE_OSM_TAGS,
+        )
+        for res in results:
+            if res.get("error") or not res.get("place_id"):
+                continue
+            if res["place_id"] in pool:
+                continue
+            if res.get("lat") is not None:
+                res["distance_km"] = haversine_km(anchor["lat"], anchor["lng"],
+                                                  res["lat"], res["lng"])
+            else:
+                res["distance_km"] = None
+            res["visit_minutes"] = estimate_visit_minutes(res.get("name", ""), res.get("types"))
+            res["detour_minutes"] = estimate_detour_minutes(res.get("distance_km"))
+            res["cost_minutes"] = res["visit_minutes"] + res["detour_minutes"]
+            pool[res["place_id"]] = res
 
         candidates = sorted(
             pool.values(),

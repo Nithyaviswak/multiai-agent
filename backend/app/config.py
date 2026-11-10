@@ -21,7 +21,12 @@ class Settings(BaseSettings):
     TAVILY_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
     ANTHROPIC_API_KEY: str = ""
-    GOOGLE_MAPS_API_KEY: str = ""
+
+    # Free map data providers (no API keys required). Override to self-host.
+    NOMINATIM_URL: str = "https://nominatim.openstreetmap.org"
+    OSRM_URL: str = "https://router.project-osrm.org"
+    OVERPASS_URL: str = "https://overpass-api.de/api/interpreter"
+    PHOTON_URL: str = "https://photon.komoot.io"
 
     # Default must be a model that currently exists on Groq (verified 2026-08-17).
     LLM_MODEL: str = "openai/gpt-oss-20b"
@@ -85,17 +90,23 @@ def validate_settings() -> Optional[list[str]]:
 def validate_optional() -> Optional[list[str]]:
     """Warnings for soft-optional settings that degrade functionality, not fail it.
 
-    The API still boots without a Google Maps key — routing, restaurant and
-    place agents report step failures gracefully and the UI surfaces an honest
-    "maps not configured" state. Supplying the key later re-enables live data.
+    Map data comes from free public services (Nominatim, OSRM, Photon) so no
+    API key is required. If the default endpoints are unreachable (network
+    policy, rate limits, maintenance), the route/restaurant/place agents fail
+    gracefully and the UI surfaces an honest "maps unavailable" state.
     """
     problems: list[str] = []
 
-    if not settings.GOOGLE_MAPS_API_KEY or settings.GOOGLE_MAPS_API_KEY.startswith("your_"):
-        problems.append(
-            "GOOGLE_MAPS_API_KEY is not set — live route, restaurant and place "
-            "data from Google Maps will be unavailable. Add it to backend/.env "
-            "to enable real map data."
-        )
+    for label, value in (
+        ("NOMINATIM_URL", settings.NOMINATIM_URL),
+        ("OSRM_URL", settings.OSRM_URL),
+        ("OVERPASS_URL", settings.OVERPASS_URL),
+        ("PHOTON_URL", settings.PHOTON_URL),
+    ):
+        if not value or value.startswith("your_"):
+            problems.append(
+                f"{label} is not set — live route, restaurant and place data "
+                "will be unavailable. Set it in backend/.env (see .env.example)."
+            )
 
     return problems
