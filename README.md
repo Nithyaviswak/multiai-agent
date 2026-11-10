@@ -80,13 +80,11 @@ multiai-agent/
     package.json
     Dockerfile          # multi-stage build → nginx
     nginx.conf          # SPA fallback + /api and /ws reverse proxy
-    netlify.toml
   deploy/aws/
     setup-ec2.sh        # one-time EC2 bootstrap (Docker, repo, env file)
     deploy.sh           # pull, build, restart, health-check
   docker-compose.yml    # production stack (frontend + backend)
   docker-compose.dev.yml # hot-reload development stack
-  render.yaml           # Render deployment
   .github/workflows/    # CI + manual AWS EC2 deploy
   README.md
 ```
@@ -268,17 +266,6 @@ rate-limited, the affected agent reports a truthful "maps unavailable" state.
 - Guardrails block destructive / prompt-injection inputs deterministically.
 - Output sanitizer redacts `api_key`, `password`, `secret`, `token` patterns.
 
-## Deploy on Render
-
-`render.yaml` deploys the backend from the `backend` directory. Required env
-vars on Render:
-
-- `GROQ_API_KEY` (default LLM provider)
-- `NOMINATIM_URL` / `OSRM_URL` / `OVERPASS_URL` / `PHOTON_URL` (optional —
-  defaults to the free public endpoints)
-- `TAVILY_API_KEY` (optional — adds web travel tips when configured)
-- `LLM_MODEL` (optional, default `openai/gpt-oss-20b`)
-
 ## Deploy on AWS EC2 (Docker Compose)
 
 Recommended single-host AWS setup: one EC2 instance runs the production
@@ -441,12 +428,3 @@ The SSH user must be in the `docker` group (done by `setup-ec2.sh`).
   secret manager) and optionally snapshot the EBS volume.
 - For multi-AZ or autoscaling requirements, move workflow/key state to a shared
   store (e.g. ElastiCache/Postgres) before moving to ECS or multiple instances.
-
-## Deploy Frontend on Netlify
-
-`frontend/netlify.toml` pre-configures a proxy to the backend API. The checked-in
-config targets the Render backend (`multiai-agent.onrender.com`); update the
-`/api/*` redirect and `VITE_API_URL` if you host the backend elsewhere.
-
-The AWS Compose stack already serves the frontend from nginx, so Netlify is only
-needed if you prefer a separate static host.
